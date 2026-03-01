@@ -41,7 +41,7 @@ addCommandAlias("check", "; scalafmtSbtCheck; scalafmtCheckAll")
 addCommandAlias("mimaChecks", "all schemaJVM/mimaReportBinaryIssues")
 addCommandAlias(
   "testJVM",
-  "typeidJVM/test; chunkJVM/test; combinatorsJVM/test; ringbufferJVM/test; schemaJVM/test; streamsJVM/test; schema-toonJVM/test; schema-messagepackJVM/test; schema-avro/test; schema-thrift/test; schema-bson/test; schema-xmlJVM/test; schema-yamlJVM/test; contextJVM/test; scopeJVM/test; mediatypeJVM/test; http-modelJVM/test; http-model-schemaJVM/test; openapiJVM/test; smithy/test"
+  "typeidJVM/test; chunkJVM/test; combinatorsJVM/test; ringbufferJVM/test; schemaJVM/test; streamsJVM/test; schema-toonJVM/test; schema-messagepackJVM/test; schema-avro/test; schema-thrift/test; schema-bson/test; schema-xmlJVM/test; schema-yamlJVM/test; contextJVM/test; scopeJVM/test; mediatypeJVM/test; http-modelJVM/test; http-model-schemaJVM/test; openapiJVM/test; smithy/test; templateJVM/test"
 )
 addCommandAlias(
   "testJS1",
@@ -49,7 +49,7 @@ addCommandAlias(
 )
 addCommandAlias(
   "testJS2",
-  "schema-xmlJS/test; schema-yamlJS/test; contextJS/test; scopeJS/test; mediatypeJS/test; http-modelJS/test; http-model-schemaJS/test"
+  "schema-xmlJS/test; schema-yamlJS/test; contextJS/test; scopeJS/test; mediatypeJS/test; http-modelJS/test; http-model-schemaJS/test; templateJS/test"
 )
 addCommandAlias(
   "testJS",
@@ -57,7 +57,7 @@ addCommandAlias(
 )
 addCommandAlias(
   "docJVM",
-  "typeidJVM/doc; chunkJVM/doc; combinatorsJVM/doc; ringbufferJVM/doc; schemaJVM/doc; streamsJVM/doc; schema-toonJVM/doc; schema-messagepackJVM/doc; schema-avro/doc; schema-thrift/doc; schema-bson/doc; schema-xmlJVM/doc; schema-yamlJVM/doc; contextJVM/doc; scopeJVM/doc; mediatypeJVM/doc; http-modelJVM/doc; http-model-schemaJVM/doc; openapiJVM/doc; smithy/doc"
+  "typeidJVM/doc; chunkJVM/doc; combinatorsJVM/doc; ringbufferJVM/doc; schemaJVM/doc; streamsJVM/doc; schema-toonJVM/doc; schema-messagepackJVM/doc; schema-avro/doc; schema-thrift/doc; schema-bson/doc; schema-xmlJVM/doc; schema-yamlJVM/doc; contextJVM/doc; scopeJVM/doc; mediatypeJVM/doc; http-modelJVM/doc; http-model-schemaJVM/doc; openapiJVM/doc; smithy/doc; templateJVM/doc"
 )
 addCommandAlias(
   "docJS1",
@@ -65,7 +65,7 @@ addCommandAlias(
 )
 addCommandAlias(
   "docJS2",
-  "schema-xmlJS/doc; schema-yamlJS/doc; contextJS/doc; scopeJS/doc; mediatypeJS/doc; http-modelJS/doc; http-model-schemaJS/doc; openapiJS/doc"
+  "schema-xmlJS/doc; schema-yamlJS/doc; contextJS/doc; scopeJS/doc; mediatypeJS/doc; http-modelJS/doc; http-model-schemaJS/doc; openapiJS/doc; templateJS/doc"
 )
 addCommandAlias(
   "docJS",
@@ -114,6 +114,8 @@ lazy val root = project
     `http-model-schema`.js,
     markdown.jvm,
     markdown.js,
+    template.jvm,
+    template.js,
     scalaNextTests.jvm,
     scalaNextTests.js,
     benchmarks,
@@ -428,6 +430,27 @@ lazy val markdown = crossProject(JSPlatform, JVMPlatform)
     }),
     coverageMinimumStmtTotal   := 16,
     coverageMinimumBranchTotal := 13
+  )
+
+lazy val template = crossProject(JSPlatform, JVMPlatform)
+  .crossType(CrossType.Full)
+  .settings(stdSettings("zio-blocks-template"))
+  .settings(crossProjectSettings)
+  .settings(buildInfoSettings("zio.blocks.template"))
+  .enablePlugins(BuildInfoPlugin)
+  .jvmSettings(mimaSettings(failOnProblem = false))
+  .jsSettings(jsSettings)
+  .settings(
+    libraryDependencies ++= Seq(
+      "dev.zio" %%% "zio-test"     % "2.1.24" % Test,
+      "dev.zio" %%% "zio-test-sbt" % "2.1.24" % Test
+    ) ++ (CrossVersion.partialVersion(scalaVersion.value) match {
+      case Some((2, _)) =>
+        Seq("org.scala-lang" % "scala-reflect" % scalaVersion.value)
+      case _ => Seq()
+    }),
+    coverageMinimumStmtTotal   := 0,
+    coverageMinimumBranchTotal := 0
   )
 
 lazy val `schema-avro` = project
