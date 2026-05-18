@@ -16,9 +16,13 @@
 
 package zio.blocks.streams.internal
 
+import zio.blocks.combinators.Eithers
 import zio.blocks.streams.io.Reader
 
 private[streams] trait InternalVersionSpecific {
+  private[streams] type StreamDisjoint[L, R] = Eithers.Eithers[L, R]
+  private[streams] type StreamDisjointWithOut[L, R, O] = Eithers.Eithers[L, R] { type Out = O }
+
   private[streams] def unsafeEvidence[A, B]: (A <:< B) = <:<.refl.asInstanceOf[A <:< B]
 
   private[streams] def pullInt[A](reader: Reader[A], sentinel: Long): Long       = reader.readInt(sentinel)(unsafeEvidence)

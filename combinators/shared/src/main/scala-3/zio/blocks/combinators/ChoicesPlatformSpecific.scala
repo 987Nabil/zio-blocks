@@ -18,12 +18,12 @@ package zio.blocks.combinators
 
 private[combinators] trait ChoicesPlatformSpecific {
 
-  def left[L, R](left: L)(using unions: Unions.Unions.WithOut[L, R, L | R]): L | R =
+  def left[L, R](left: L)(using unions: DisjointUnions.DisjointUnions.WithOut[L, R, L | R]): L | R =
     unions.combine(Left(left))
 
-  def right[L, R](right: R)(using unions: Unions.Unions.WithOut[L, R, L | R]): L | R =
+  def right[L, R](right: R)(using unions: DisjointUnions.DisjointUnions.WithOut[L, R, L | R]): L | R =
     unions.combine(Right(right))
 
-  def separate[L, R](out: L | R)(using unions: Unions.Unions.WithOut[L, R, L | R]): Either[L, R] =
+  def separate[L, R](out: L | R)(using unions: DisjointUnions.DisjointUnions.WithOut[L, R, L | R]): Either[L, R] =
     unions.separate(out)
 }

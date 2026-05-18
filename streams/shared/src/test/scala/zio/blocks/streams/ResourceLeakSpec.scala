@@ -346,7 +346,7 @@ object ResourceLeakSpec extends StreamsBaseSpec {
         val stream         = Stream
           .fail("err")
           .ensuring(firstReleased.set(true))
-          .concat(
+          .++(
             Stream.suspend {
               secondStarted.set(true)
               Stream.succeed(42).ensuring(secondReleased.set(true))
@@ -380,12 +380,12 @@ object ResourceLeakSpec extends StreamsBaseSpec {
           .fromAcquireRelease("A", (r: String) => { releaseOrder.add(r); () }) { r =>
             Stream.succeed(r)
           }
-          .concat(
+          .++(
             Stream.fromAcquireRelease("B", (r: String) => { releaseOrder.add(r); () }) { r =>
               Stream.succeed(r)
             }
           )
-          .concat(
+          .++(
             Stream.fromAcquireRelease("C", (r: String) => { releaseOrder.add(r); () }) { r =>
               Stream.succeed(r)
             }

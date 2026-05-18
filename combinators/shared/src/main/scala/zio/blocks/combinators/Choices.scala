@@ -20,13 +20,13 @@ package zio.blocks.combinators
  * Direct branch construction / elimination over `|`.
  *
  * Scala 3 keeps native union types; `left`, `right`, and `separate` require
- * compile-time `Unions.WithOut` evidence that enforces disjointness.
+ * compile-time `DisjointUnions.WithOut` evidence that enforces disjointness.
  *
  * Scala 2 reinterprets `|` as `Either[L, R]`; `left`, `right`, and `separate`
- * require `Concat.WithOut` evidence resolved automatically by the `Concat`
- * macro, which also enforces disjointness at compile time. Same-type or subtype
- * relationships are rejected. The caller-side syntax is identical across both
- * versions.
+ * require `DisjointUnions.WithOut` evidence resolved automatically by the
+ * `DisjointUnions` macro, which also enforces disjointness at compile time.
+ * Same-type or subtype relationships are rejected. The caller-side syntax is
+ * identical across both versions.
  *
  * Use `Choices.separate` to normalize elements back to `Either[L, R]` on both
  * platforms.

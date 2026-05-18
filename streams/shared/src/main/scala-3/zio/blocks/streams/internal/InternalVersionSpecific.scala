@@ -16,13 +16,21 @@
 
 package zio.blocks.streams.internal
 
+import zio.blocks.combinators.Unions
 import zio.blocks.streams.io.Reader
 
 private[streams] trait InternalVersionSpecific {
+  private[streams] type StreamDisjoint[L, R]           = Unions.Unions[L, R]
+  private[streams] type StreamDisjointWithOut[L, R, O] = Unions.Unions[L, R] { type Out = O }
+
   private[streams] inline def unsafeEvidence[A, B]: (A <:< B) = <:<.refl.asInstanceOf[A <:< B]
 
-  private[streams] def pullInt[A](reader: Reader[A], sentinel: Long): Long        = reader.readInt(sentinel)(using unsafeEvidence)
-  private[streams] def pullLong[A](reader: Reader[A], sentinel: Long): Long       = reader.readLong(sentinel)(using unsafeEvidence)
-  private[streams] def pullFloat[A](reader: Reader[A], sentinel: Double): Double  = reader.readFloat(sentinel)(using unsafeEvidence)
-  private[streams] def pullDouble[A](reader: Reader[A], sentinel: Double): Double = reader.readDouble(sentinel)(using unsafeEvidence)
+  private[streams] def pullInt[A](reader: Reader[A], sentinel: Long): Long =
+    reader.readInt(sentinel)(using unsafeEvidence)
+  private[streams] def pullLong[A](reader: Reader[A], sentinel: Long): Long =
+    reader.readLong(sentinel)(using unsafeEvidence)
+  private[streams] def pullFloat[A](reader: Reader[A], sentinel: Double): Double =
+    reader.readFloat(sentinel)(using unsafeEvidence)
+  private[streams] def pullDouble[A](reader: Reader[A], sentinel: Double): Double =
+    reader.readDouble(sentinel)(using unsafeEvidence)
 }

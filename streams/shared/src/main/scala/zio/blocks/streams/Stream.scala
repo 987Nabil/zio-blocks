@@ -18,7 +18,7 @@ package zio.blocks.streams
 
 import scala.annotation.unchecked.uncheckedVariance
 import zio.blocks.chunk.{Chunk, ChunkBuilder}
-import zio.blocks.combinators.{Concat, Tuples}
+import zio.blocks.combinators.Tuples
 import zio.blocks.scope.{Resource, Scope}
 import zio.blocks.streams.internal.{EndOfStream, Interpreter, StreamError, pullDouble, pullFloat, pullInt, pullLong}
 import zio.blocks.streams.io.Reader
@@ -66,11 +66,9 @@ abstract class Stream[+E, +A] {
   /** Returns [[render]]. */
   final override def toString: String = render
 
-  /** Alias for [[concat]]. */
-  final def ++[E1 >: E, A2, A3](that: Stream[E1, A2])(implicit
-    valueConcat: Concat.WithOut[A @uncheckedVariance, A2, A3],
-    jtA3: JvmType.Infer[A3]
-  ): Stream[E1, A3] = concat(that)
+  /** Concatenates two streams, widening to a common supertype. */
+  final def ++[E1 >: E, A1 >: A](that: Stream[E1, A1]): Stream[E1, A1] =
+    new Stream.Concatenated[E1, A1](this.asInstanceOf[Stream[E1, A1]], that)
 
   /**
    * Alias for [[orElse]]. The fallback stream is evaluated lazily, only on
@@ -96,25 +94,22 @@ abstract class Stream[+E, +A] {
 
   /** Emits all elements of `this` followed by all elements of `that`. */
   def concat[E1 >: E, A2, A3](that: Stream[E1, A2])(implicit
-    valueConcat: Concat.WithOut[A @uncheckedVariance, A2, A3],
+    sc: internal.StreamDisjointWithOut[A @uncheckedVariance, A2, A3],
     jtA3: JvmType.Infer[A3]
   ): Stream[E1, A3] =
-    if (valueConcat.isIdentityLike)
-      new Stream.Concatenated[E1, A3](this.asInstanceOf[Stream[E1, A3]], that.asInstanceOf[Stream[E1, A3]])
-    else
-      new Stream.Concatenated[E1, A3](
-        this.asInstanceOf[Stream[E1, A]].map[A3](valueConcat.left),
-        that.asInstanceOf[Stream[E1, A2]].map[A3](valueConcat.right)
-      )
+    new Stream.Concatenated[E1, A3](
+      this.asInstanceOf[Stream[E1, A]].map[A3](a => sc.combine(Left(a))),
+      that.asInstanceOf[Stream[E1, A2]].map[A3](a2 => sc.combine(Right(a2)))
+    )
 
   /**
    * Zips this stream with `that`, pairing elements positionally. Shorter stream
    * determines length. Uses [[zio.blocks.combinators.Tuples]] for flattened
    * composition: `a && b && c` produces a `Stream` of `(A, B, C)`.
    */
-  def &&[E1 >: E, A1 >: A, B, C](
+  def &&[E1 >: E, B, C](
     that: Stream[E1, B]
-  )(implicit t: Tuples.Tuples[A1, B] { type Out = C }): Stream[E1, C] =
+  )(implicit t: Tuples.Tuples[A @uncheckedVariance, B] { type Out = C }): Stream[E1, C] =
     Stream.fromReader {
       val left  = Stream.compileToReader(this.asInstanceOf[Stream[Any, Any]])
       val right =
@@ -132,7 +127,7 @@ abstract class Stream[+E, +A] {
           if (l.asInstanceOf[AnyRef] eq EndOfStream) { right.close(); return sentinel }
           val r = right.read[Any](EndOfStream)
           if (r.asInstanceOf[AnyRef] eq EndOfStream) { left.close(); return sentinel }
-          t.combine(l.asInstanceOf[A1], r.asInstanceOf[B]).asInstanceOf[O1]
+          t.combine(l.asInstanceOf[A @uncheckedVariance], r.asInstanceOf[B]).asInstanceOf[O1]
         }
         def close(): Unit = {
           var firstError: Throwable = null

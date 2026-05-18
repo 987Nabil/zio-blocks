@@ -155,11 +155,11 @@ object TypeInferenceSpec extends ZIOSpecDefault {
         )
       }
     ),
-    suite("Unions.combine type inference")(
+    suite("DisjointUnions.combine type inference")(
       test("combine(Left(42): Either[Int, String]) infers union with Int and String") {
         val errors = typeCheckErrors("""
-          import zio.blocks.combinators.Unions
-          val result: String = Unions.combine(Left(42): Either[Int, String])
+          import zio.blocks.combinators.DisjointUnions
+          val result: String = DisjointUnions.combine(Left(42): Either[Int, String])
         """)
         assertTrue(
           errors.nonEmpty,
@@ -168,8 +168,8 @@ object TypeInferenceSpec extends ZIOSpecDefault {
       },
       test("combine(Right(\"hello\"): Either[Int, String]) infers union with Int and String") {
         val errors = typeCheckErrors("""
-          import zio.blocks.combinators.Unions
-          val result: String = Unions.combine(Right("hello"): Either[Int, String])
+          import zio.blocks.combinators.DisjointUnions
+          val result: String = DisjointUnions.combine(Right("hello"): Either[Int, String])
         """)
         assertTrue(
           errors.nonEmpty,
@@ -178,8 +178,8 @@ object TypeInferenceSpec extends ZIOSpecDefault {
       },
       test("combine with Boolean | Double infers union type") {
         val errors = typeCheckErrors("""
-          import zio.blocks.combinators.Unions
-          val result: String = Unions.combine(Left(true): Either[Boolean, Double])
+          import zio.blocks.combinators.DisjointUnions
+          val result: String = DisjointUnions.combine(Left(true): Either[Boolean, Double])
         """)
         assertTrue(
           errors.nonEmpty,
@@ -187,11 +187,11 @@ object TypeInferenceSpec extends ZIOSpecDefault {
         )
       }
     ),
-    suite("Unions.separate type inference")(
+    suite("DisjointUnions.separate type inference")(
       test("separate(Int | String) with explicit instance infers Either type") {
         val errors = typeCheckErrors("""
-          import zio.blocks.combinators.Unions
-          val u = summon[Unions.Unions.WithOut[Int, String, Int | String]]
+          import zio.blocks.combinators.DisjointUnions
+          val u = summon[DisjointUnions.DisjointUnions.WithOut[Int, String, Int | String]]
           val result: String = u.separate(42: (Int | String))
         """)
         assertTrue(
@@ -201,8 +201,8 @@ object TypeInferenceSpec extends ZIOSpecDefault {
       },
       test("separate preserves union structure in Either type") {
         val errors = typeCheckErrors("""
-          import zio.blocks.combinators.Unions
-          val u = summon[Unions.Unions.WithOut[Int, String, Int | String]]
+          import zio.blocks.combinators.DisjointUnions
+          val u = summon[DisjointUnions.DisjointUnions.WithOut[Int, String, Int | String]]
           val result: String = u.separate("hello": (Int | String))
         """)
         assertTrue(
@@ -234,10 +234,10 @@ object TypeInferenceSpec extends ZIOSpecDefault {
           errors.exists(e => e.message.contains("Found") && e.message.contains("c.Out"))
         )
       },
-      test("generic function using Unions.Unions shows type inference") {
+      test("generic function using DisjointUnions.DisjointUnions shows type inference") {
         val errors = typeCheckErrors("""
-          import zio.blocks.combinators.Unions
-          def to_union[L, R](e: Either[L, R])(using c: Unions.Unions[L, R]): String = Unions.combine(e)
+          import zio.blocks.combinators.DisjointUnions
+          def to_union[L, R](e: Either[L, R])(using c: DisjointUnions.DisjointUnions[L, R]): String = DisjointUnions.combine(e)
           to_union(Left(42): Either[Int, String])
         """)
         assertTrue(
@@ -295,12 +295,12 @@ object TypeInferenceSpec extends ZIOSpecDefault {
       },
       test("union type inference with Either source") {
         val errors = typeCheckErrors("""
-          import zio.blocks.combinators.Unions
-          val result: String = Unions.combine(Left(42): Either[Int, Either[String, Boolean]])
+          import zio.blocks.combinators.DisjointUnions
+          val result: String = DisjointUnions.combine(Left(42): Either[Int, Either[String, Boolean]])
         """)
         assertTrue(
           errors.nonEmpty,
-          errors.exists(_.message.contains("Unions"))
+          errors.exists(_.message.contains("DisjointUnions"))
         )
       },
       test("tuple inference with method calls") {

@@ -21,13 +21,6 @@ import zio.blocks.combinators.Choices
 import zio.test._
 import zio.test.Assertion._
 
-/**
- * Cross-version tests for `Stream.++` / `Stream.concat`.
- *
- * `Choices.separate` normalizes disjoint unions to `Either[L, R]`, which keeps
- * the assertions identical on Scala 2 (`|` = `Either`) and Scala 3 (native
- * unions).
- */
 object StreamConcatSharedSpec extends StreamsBaseSpec {
 
   sealed trait Animal
@@ -35,8 +28,8 @@ object StreamConcatSharedSpec extends StreamsBaseSpec {
   final case class Cat(name: String) extends Animal
 
   def spec: Spec[TestEnvironment, Any] = suite("Stream.++ / concat (shared)")(
-    test("disjoint concatenation") {
-      val result = Stream.succeed("hello") ++ Stream.succeed(42)
+    test("disjoint concat wraps elements") {
+      val result = Stream.succeed("hello").concat(Stream.succeed(42))
       assert(result.runCollect.map(_.map(elem => Choices.separate[String, Int](elem))))(
         equalTo(Right(Chunk(Left("hello"), Right(42))))
       )
@@ -50,19 +43,19 @@ object StreamConcatSharedSpec extends StreamsBaseSpec {
       assert(result.runCollect)(equalTo(Right(Chunk[Animal](Dog("fido"), Cat("milo")))))
     },
     test("empty left stream") {
-      val result = (Stream.empty: Stream[Nothing, String]) ++ Stream.succeed(42)
+      val result = (Stream.empty: Stream[Nothing, String]).concat(Stream.succeed(42))
       assert(result.runCollect.map(_.map(elem => Choices.separate[String, Int](elem))))(
         equalTo(Right(Chunk(Right(42))))
       )
     },
     test("empty right stream") {
-      val result = Stream.succeed("hello") ++ (Stream.empty: Stream[Nothing, Int])
+      val result = Stream.succeed("hello").concat(Stream.empty: Stream[Nothing, Int])
       assert(result.runCollect.map(_.map(elem => Choices.separate[String, Int](elem))))(
         equalTo(Right(Chunk(Left("hello"))))
       )
     },
     test("left stream error propagation") {
-      val result = (Stream.fail("boom"): Stream[String, String]) ++ Stream.succeed(42)
+      val result = (Stream.fail("boom"): Stream[String, String]).concat(Stream.succeed(42))
       assert(result.runCollect)(equalTo(Left("boom")))
     },
     test("unrelated error types widen to common supertype") {
@@ -72,7 +65,7 @@ object StreamConcatSharedSpec extends StreamsBaseSpec {
 
       val left: Stream[LeftErr, String] = Stream.fail(LeftErr("oops"))
       val right: Stream[RightErr, Int]  = Stream.succeed(42)
-      val result                        = left ++ right
+      val result                        = left.concat(right)
       val actual                        =
         result.runCollect.left.map(err => err: AppError)
       assert(actual)(equalTo(Left(LeftErr("oops"): AppError)))
@@ -84,17 +77,13 @@ object StreamConcatSharedSpec extends StreamsBaseSpec {
 
       val left: Stream[LeftErr, String] = Stream.succeed("ok")
       val right: Stream[RightErr, Int]  = Stream.fail(RightErr(404))
-      val result                        = left ++ right
+      val result                        = left.concat(right)
       val actual                        =
         result.runCollect.left.map(err => err: AppError)
       assert(actual)(equalTo(Left(RightErr(404): AppError)))
     },
-    test("type ascription compiles") {
-      val _ = Stream.succeed("a") ++ Stream.succeed(1)
-      assertTrue(true)
-    },
     test("multiple elements per side") {
-      val result = Stream("a", "b") ++ Stream(1, 2)
+      val result = Stream("a", "b").concat(Stream(1, 2))
       assert(result.runCollect.map(_.map(elem => Choices.separate[String, Int](elem))))(
         equalTo(Right(Chunk(Left("a"), Left("b"), Right(1), Right(2))))
       )
