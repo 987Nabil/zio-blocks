@@ -101,6 +101,11 @@ object DbCodecSpec extends ZIOSpecDefault {
     implicit val schema: Schema[WithEnum] = Schema.derived
   }
 
+  case class WithListField(id: Int, items: List[SimpleRecord])
+  object WithListField {
+    implicit val schema: Schema[WithListField] = Schema.derived
+  }
+
   case class WithOptionalEnum(id: Int, status: Option[Status])
   object WithOptionalEnum {
     implicit val schema: Schema[WithOptionalEnum] = Schema.derived
@@ -251,6 +256,26 @@ object DbCodecSpec extends ZIOSpecDefault {
             DbValue.DbDouble(6.0),
             DbValue.DbString("hello")
           )
+        )
+      },
+      test("record with List field uses JSONB for the list") {
+        val codec = deriveCodec[WithListField]
+        assertTrue(
+          codec.columns == IndexedSeq("id", "items"),
+          codec.columnCount == 2
+        )
+      },
+      test("record with List field round-trips JSON array through JSONB fallback") {
+        val codec = deriveCodec[List[SimpleRecord]]
+        val value = codec.readValue(
+          new SingleStringColumnReader(
+            "value",
+            """[{"name":"apple","age":1},{"name":"pear","age":2}]"""
+          ),
+          IndexedSeq("value")
+        )
+        assertTrue(
+          value == List(SimpleRecord("apple", 1), SimpleRecord("pear", 2))
         )
       }
     ),
@@ -414,16 +439,14 @@ object DbCodecSpec extends ZIOSpecDefault {
         )
       }
     ),
-    suite("unsupported types")(
-      test("List throws UnsupportedOperationException") {
-        val result =
-          try {
-            deriveCodec[List[Int]]
-            false
-          } catch {
-            case _: UnsupportedOperationException => true
-          }
-        assertTrue(result)
+    suite("JSONB fallback")(
+      test("List codec uses a single JSONB column") {
+        val codec = deriveCodec[List[Int]]
+        assertTrue(
+          codec.columns == IndexedSeq("value"),
+          codec.columnCount == 1,
+          codec.toDbValues(List(1, 2, 3)) == IndexedSeq(DbValue.DbString("[1,2,3]"))
+        )
       }
     )
   )

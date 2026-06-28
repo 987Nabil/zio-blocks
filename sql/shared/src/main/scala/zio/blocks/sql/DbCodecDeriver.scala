@@ -357,9 +357,17 @@ class DbCodecDeriver(columnNameMapper: SqlNameMapper = SqlNameMapper.SnakeCase) 
     defaultValue: Option[C[A]],
     examples: Seq[C[A]]
   )(implicit F: HasBinding[F], D: HasInstance[F]): Lazy[DbCodec[C[A]]] =
-    Lazy {
-      throw new UnsupportedOperationException(
-        "DbCodec does not support collection types (Seq, List, etc.) as SQL columns"
+    element.transform(DynamicOptic.root, F).map { boundElement =>
+      jsonbCodec(
+        new Schema(
+          new Reflect.Sequence[Binding, A, C](
+            boundElement,
+            typeId,
+            binding,
+            doc,
+            modifiers
+          )
+        )
       )
     }
 
@@ -373,9 +381,18 @@ class DbCodecDeriver(columnNameMapper: SqlNameMapper = SqlNameMapper.SnakeCase) 
     defaultValue: Option[M[K, V]],
     examples: Seq[M[K, V]]
   )(implicit F: HasBinding[F], D: HasInstance[F]): Lazy[DbCodec[M[K, V]]] =
-    Lazy {
-      throw new UnsupportedOperationException(
-        "DbCodec does not support Map types as SQL columns"
+    key.transform(DynamicOptic.root, F).zip(value.transform(DynamicOptic.root, F)).map { case (boundKey, boundValue) =>
+      jsonbCodec(
+        new Schema(
+          Reflect.Map[Binding, K, V, M](
+            boundKey,
+            boundValue,
+            typeId,
+            binding,
+            doc,
+            modifiers
+          )
+        )
       )
     }
 
@@ -508,6 +525,29 @@ class DbCodecDeriver(columnNameMapper: SqlNameMapper = SqlNameMapper.SnakeCase) 
       val caseName = renamed.getOrElse(case_.name)
       caseName
     }
+  }
+
+  private def jsonbCodec[A](schema: Schema[A]): DbCodec[A] = new DbCodec[A] {
+    val columns: IndexedSeq[String] = IndexedSeq("value")
+
+    override def readValue(reader: DbResultReader, columnLabels: IndexedSeq[String]): A =
+      decodeJsonb(reader.getString(columnLabels.head))
+
+    override def readValue(reader: DbResultReader, startIndex: Int): A =
+      decodeJsonb(reader.getString(startIndex))
+
+    def writeValue(writer: DbParamWriter, startIndex: Int, value: A): Unit =
+      writer.setString(startIndex, schema.jsonCodec.encodeToString(value))
+
+    def toDbValues(value: A): IndexedSeq[DbValue] =
+      IndexedSeq(DbValue.DbString(schema.jsonCodec.encodeToString(value)))
+
+    private def decodeJsonb(json: String): A =
+      schema.jsonCodec.decode(if (json eq null) "null" else json) match {
+        case Right(value) => value
+        case Left(error)  =>
+          throw new IllegalArgumentException(s"JSONB decode error: ${error.message}", error)
+      }
   }
 
   private val unitCodec: DbCodec[Unit] = new DbCodec[Unit] {
