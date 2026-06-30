@@ -276,7 +276,10 @@ lazy val root = project
     mux.js,
     `mux-examples`,
     smithy,
-    `smithy-examples`
+    `smithy-examples`,
+    telemetry.jvm,
+    telemetry.js,
+    otel
   )
 
 lazy val ringbuffer = crossProject(JSPlatform, JVMPlatform)
@@ -569,6 +572,8 @@ lazy val telemetry = crossProject(JSPlatform, JVMPlatform)
   )
   .jvmSettings(
     mimaSettings(failOnProblem = false),
+    // Tests share GlobalLogState (mutable singleton); parallel specs cause race conditions.
+    Test / parallelExecution := false,
     Compile / scalacOptions := {
       val base = (Compile / scalacOptions).value
       base.zipWithIndex.flatMap { case (opt, i) =>
@@ -643,13 +648,8 @@ lazy val streams = crossProject(JSPlatform, JVMPlatform)
     Test / parallelExecution := false,
     // Streams requires JDK 21+ (Project Loom virtual threads).
     // Override the default -release flag so Thread.ofVirtual() is available.
-    // Only set -release 21 when running on JDK 21+; on JDK 17 CI, skip
-    // compilation of streams (tests will be skipped due to compilation failure).
     scalacOptions ~= (opts => removeOptionWithValue(opts, "-release")),
-    scalacOptions ++= {
-      val jdkVersion = System.getProperty("java.specification.version", "17").toInt
-      if (jdkVersion >= 21) Seq("-release", "21") else Seq("-release", jdkVersion.toString)
-    },
+    scalacOptions ++= Seq("-release", "21"),
     Compile / doc / scalacOptions ~= (opts => removeOptionWithValue(opts, "-release")),
     scalacOptions ++= Seq(
       // scope.leak is used intentionally throughout Streams internals
@@ -660,10 +660,7 @@ lazy val streams = crossProject(JSPlatform, JVMPlatform)
       // Alphanumeric infix in tests (andThen, etc.)
       "-Wconf:msg=Alphanumeric method.*infix:s"
     ),
-    javacOptions ++= {
-      val jdkVersion = System.getProperty("java.specification.version", "17").toInt
-      if (jdkVersion >= 21) Seq("--release", "21") else Seq("--release", jdkVersion.toString)
-    }
+    javacOptions ++= Seq("--release", "21")
   )
   .jsSettings(
     jsSettings,
@@ -1480,18 +1477,12 @@ lazy val `streams-benchmark` = project
       opts.zipWithIndex.flatMap { case (o, i) => if (o == "-release") None else Some((o, i)) }
         .map(_._1)
     },
-    scalacOptions ++= {
-      val jdkVersion = System.getProperty("java.specification.version", "17").toInt
-      if (jdkVersion >= 21) Seq("-release", "21") else Seq("-release", jdkVersion.toString)
-    },
+    scalacOptions ++= Seq("-release", "21"),
     scalacOptions ++= Seq(
       "-Wconf:msg=being leaked from scope:s",
       "-Wconf:msg=unused.*import:s"
     ),
-    javacOptions ++= {
-      val jdkVersion = System.getProperty("java.specification.version", "17").toInt
-      if (jdkVersion >= 21) Seq("--release", "21") else Seq("--release", jdkVersion.toString)
-    },
+    javacOptions ++= Seq("--release", "21"),
     libraryDependencies ++= Seq(
       // fs2 — pull-based functional streams (Cats Effect)
       "co.fs2"        %% "fs2-core"    % "3.13.0",
