@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.http
 
 import zio.test._
@@ -57,6 +73,18 @@ object FormSpec extends HttpModelBaseSpec {
       test("decodes percent-encoded keys and values") {
         val form = Form.fromString("key%20name=value%26special")
         assertTrue(form.get("key name") == Some("value&special"))
+      },
+      test("decodes plus as space") {
+        val form = Form.fromString("first+name=John+Doe")
+        assertTrue(form.get("first name") == Some("John Doe"))
+      },
+      test("decodes percent-encoded plus as literal plus") {
+        val form = Form.fromString("math=1%2B1")
+        assertTrue(form.get("math") == Some("1+1"))
+      },
+      test("decodes percent-encoded equals sign in keys") {
+        val form = Form.fromString("a%3Db=value")
+        assertTrue(form.get("a=b") == Some("value"))
       },
       test("handles empty string") {
         val form = Form.fromString("")
@@ -125,18 +153,26 @@ object FormSpec extends HttpModelBaseSpec {
         val form    = Form("key name" -> "value&special")
         val encoded = form.encode
         assertTrue(
-          encoded.contains("key%20name"),
+          encoded.contains("key+name"),
           encoded.contains("value%26special")
         )
       },
       test("encodes equals sign in values") {
         val form    = Form("expr" -> "a=b")
         val encoded = form.encode
-        assertTrue(encoded == "expr=a%3Db" || encoded == "expr=a=b")
+        assertTrue(encoded == "expr=a=b")
+      },
+      test("encodes equals sign in keys") {
+        val form = Form("a=b" -> "value")
+        assertTrue(form.encode == "a%3Db=value")
       },
       test("encodes spaces in values") {
         val form = Form("msg" -> "hello world")
-        assertTrue(form.encode.contains("hello%20world"))
+        assertTrue(form.encode.contains("hello+world"))
+      },
+      test("encodes literal plus signs") {
+        val form = Form("math" -> "1+1", "a+b" -> "plus")
+        assertTrue(form.encode == "math=1%2B1&a%2Bb=plus")
       }
     ),
     suite("round-trip")(
@@ -147,6 +183,11 @@ object FormSpec extends HttpModelBaseSpec {
       },
       test("round-trip with special characters") {
         val original     = Form("key name" -> "value&special", "x" -> "y")
+        val roundTripped = Form.fromString(original.encode)
+        assertTrue(roundTripped == original)
+      },
+      test("round-trip with literal plus signs and equals signs in keys") {
+        val original     = Form("math" -> "1+1", "a=b" -> "c+d")
         val roundTripped = Form.fromString(original.encode)
         assertTrue(roundTripped == original)
       },

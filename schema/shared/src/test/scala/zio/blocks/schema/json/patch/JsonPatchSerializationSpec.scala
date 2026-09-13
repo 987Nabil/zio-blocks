@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema.json.patch
 
 import zio.blocks.chunk.Chunk
@@ -105,13 +121,13 @@ object JsonPatchSerializationSpec extends SchemaBaseSpec {
     test("ArrayOp.Insert serializes") {
       roundTrip(
         ArrayOp.Insert(1, Chunk(Json.Number(42), Json.String("test"))): ArrayOp,
-        """{"Insert":{"index":1,"values":[{"Number":{"value":42}},{"String":{"value":"test"}}]}}"""
+        """{"Insert":{"index":1,"values":[42,"test"]}}"""
       )
     },
     test("ArrayOp.Append serializes") {
       roundTrip(
         ArrayOp.Append(Chunk(Json.Boolean(true), Json.Null)): ArrayOp,
-        """{"Append":{"values":[{"Boolean":{"value":true}},{"Null":{}}]}}"""
+        """{"Append":{"values":[true,null]}}"""
       )
     },
     test("ArrayOp.Delete serializes") {
@@ -123,7 +139,7 @@ object JsonPatchSerializationSpec extends SchemaBaseSpec {
     test("ArrayOp.Modify with Set operation") {
       roundTrip(
         ArrayOp.Modify(0, Op.Set(Json.Number(100))): ArrayOp,
-        """{"Modify":{"index":0,"op":{"Set":{"value":{"Number":{"value":100}}}}}}"""
+        """{"Modify":{"index":0,"op":{"Set":{"value":100}}}}"""
       )
     },
     test("ArrayOp.Modify with nested PrimitiveDelta") {
@@ -140,7 +156,7 @@ object JsonPatchSerializationSpec extends SchemaBaseSpec {
     test("ObjectOp.Add serializes") {
       roundTrip(
         ObjectOp.Add("name", Json.String("Alice")): ObjectOp,
-        """{"Add":{"key":"name","value":{"String":{"value":"Alice"}}}}"""
+        """{"Add":{"key":"name","value":"Alice"}}"""
       )
     },
     test("ObjectOp.Remove serializes") {
@@ -154,13 +170,13 @@ object JsonPatchSerializationSpec extends SchemaBaseSpec {
       roundTrip(
         ObjectOp.Modify("counter", innerPatch): ObjectOp,
         // Empty path serializes as empty object
-        """{"Modify":{"key":"counter","patch":{"ops":[{"path":{},"operation":{"Set":{"value":{"Number":{"value":42}}}}}]}}}"""
+        """{"Modify":{"key":"counter","patch":{"ops":[{"path":{},"operation":{"Set":{"value":42}}}]}}}"""
       )
     },
     test("ObjectOp with unicode keys") {
       roundTrip(
         ObjectOp.Add("名前", Json.String("太郎")): ObjectOp,
-        """{"Add":{"key":"名前","value":{"String":{"value":"太郎"}}}}"""
+        """{"Add":{"key":"名前","value":"太郎"}}"""
       )
     }
   )
@@ -171,13 +187,13 @@ object JsonPatchSerializationSpec extends SchemaBaseSpec {
     test("Op.Set with simple value") {
       roundTrip(
         Op.Set(Json.String("hello")): Op,
-        """{"Set":{"value":{"String":{"value":"hello"}}}}"""
+        """{"Set":{"value":"hello"}}"""
       )
     },
     test("Op.Set with complex object") {
       roundTrip(
         Op.Set(Json.Object("a" -> Json.Number(1), "b" -> Json.Array(Json.Boolean(true)))): Op,
-        """{"Set":{"value":{"Object":{"value":[["a",{"Number":{"value":1}}],["b",{"Array":{"value":[{"Boolean":{"value":true}}]}}]]}}}}"""
+        """{"Set":{"value":{"a":1,"b":[true]}}}"""
       )
     },
     test("Op.PrimitiveDelta with NumberDelta") {
@@ -200,7 +216,7 @@ object JsonPatchSerializationSpec extends SchemaBaseSpec {
             ArrayOp.Delete(0, 1)
           )
         ): Op,
-        """{"ArrayEdit":{"ops":[{"Append":{"values":[{"Number":{"value":1}}]}},{"Delete":{"index":0,"count":1}}]}}"""
+        """{"ArrayEdit":{"ops":[{"Append":{"values":[1]}},{"Delete":{"index":0,"count":1}}]}}"""
       )
     },
     test("Op.ObjectEdit serializes") {
@@ -211,7 +227,7 @@ object JsonPatchSerializationSpec extends SchemaBaseSpec {
             ObjectOp.Remove("y")
           )
         ): Op,
-        """{"ObjectEdit":{"ops":[{"Add":{"key":"x","value":{"Number":{"value":10}}}},{"Remove":{"key":"y"}}]}}"""
+        """{"ObjectEdit":{"ops":[{"Add":{"key":"x","value":10}},{"Remove":{"key":"y"}}]}}"""
       )
     },
     test("Op.Nested serializes") {
@@ -219,7 +235,7 @@ object JsonPatchSerializationSpec extends SchemaBaseSpec {
       roundTrip(
         Op.Nested(innerPatch): Op,
         // Empty path serializes as empty object
-        """{"Nested":{"patch":{"ops":[{"path":{},"operation":{"Set":{"value":{"Boolean":{"value":true}}}}}]}}}"""
+        """{"Nested":{"patch":{"ops":[{"path":{},"operation":{"Set":{"value":true}}}]}}}"""
       )
     }
   )
@@ -231,7 +247,7 @@ object JsonPatchSerializationSpec extends SchemaBaseSpec {
       roundTrip(
         JsonPatchOp(DynamicOptic.root, Op.Set(Json.Number(42))),
         // Empty path serializes as empty object
-        """{"path":{},"operation":{"Set":{"value":{"Number":{"value":42}}}}}"""
+        """{"path":{},"operation":{"Set":{"value":42}}}"""
       )
     },
     test("JsonPatchOp with single field path") {
@@ -241,7 +257,7 @@ object JsonPatchSerializationSpec extends SchemaBaseSpec {
           Op.Set(Json.String("Bob"))
         ),
         // Path is serialized as DynamicOptic record with nodes field
-        """{"path":{"nodes":[{"Field":{"name":"name"}}]},"operation":{"Set":{"value":{"String":{"value":"Bob"}}}}}"""
+        """{"path":{"nodes":[{"Field":{"name":"name"}}]},"operation":{"Set":{"value":"Bob"}}}"""
       )
     },
     test("JsonPatchOp with nested path") {
@@ -250,7 +266,7 @@ object JsonPatchSerializationSpec extends SchemaBaseSpec {
           DynamicOptic.root.field("user").field("address").field("city"),
           Op.Set(Json.String("NYC"))
         ),
-        """{"path":{"nodes":[{"Field":{"name":"user"}},{"Field":{"name":"address"}},{"Field":{"name":"city"}}]},"operation":{"Set":{"value":{"String":{"value":"NYC"}}}}}"""
+        """{"path":{"nodes":[{"Field":{"name":"user"}},{"Field":{"name":"address"}},{"Field":{"name":"city"}}]},"operation":{"Set":{"value":"NYC"}}}"""
       )
     },
     test("JsonPatchOp with array index in path") {
@@ -277,7 +293,7 @@ object JsonPatchSerializationSpec extends SchemaBaseSpec {
       roundTrip(
         JsonPatch.root(Op.Set(Json.String("hello"))),
         // Empty path serializes as empty object
-        """{"ops":[{"path":{},"operation":{"Set":{"value":{"String":{"value":"hello"}}}}}]}"""
+        """{"ops":[{"path":{},"operation":{"Set":{"value":"hello"}}}]}"""
       )
     },
     test("JsonPatch with multiple operations") {
@@ -295,7 +311,7 @@ object JsonPatchSerializationSpec extends SchemaBaseSpec {
           )
         ),
         // Path is serialized as DynamicOptic record with nodes field
-        """{"ops":[{"path":{"nodes":[{"Field":{"name":"name"}}]},"operation":{"Set":{"value":{"String":{"value":"Alice"}}}}},{"path":{"nodes":[{"Field":{"name":"age"}}]},"operation":{"PrimitiveDelta":{"op":{"NumberDelta":{"delta":1}}}}}]}"""
+        """{"ops":[{"path":{"nodes":[{"Field":{"name":"name"}}]},"operation":{"Set":{"value":"Alice"}}},{"path":{"nodes":[{"Field":{"name":"age"}}]},"operation":{"PrimitiveDelta":{"op":{"NumberDelta":{"delta":1}}}}}]}"""
       )
     }
   )
@@ -311,7 +327,7 @@ object JsonPatchSerializationSpec extends SchemaBaseSpec {
       // Empty paths serialize as empty objects
       roundTrip(
         level1,
-        """{"ops":[{"path":{},"operation":{"Nested":{"patch":{"ops":[{"path":{},"operation":{"Nested":{"patch":{"ops":[{"path":{},"operation":{"Set":{"value":{"Number":{"value":42}}}}}]}}}}]}}}}]}"""
+        """{"ops":[{"path":{},"operation":{"Nested":{"patch":{"ops":[{"path":{},"operation":{"Nested":{"patch":{"ops":[{"path":{},"operation":{"Set":{"value":42}}}]}}}}]}}}}]}"""
       )
     },
     test("ObjectOp.Modify with deeply nested patches") {
@@ -329,7 +345,7 @@ object JsonPatchSerializationSpec extends SchemaBaseSpec {
       // Empty paths serialize as empty objects
       roundTrip(
         ObjectOp.Modify("outer", innerPatch): ObjectOp,
-        """{"Modify":{"key":"outer","patch":{"ops":[{"path":{},"operation":{"ObjectEdit":{"ops":[{"Add":{"key":"nested","value":{"Object":{"value":[["a",{"Number":{"value":1}}]]}}}},{"Modify":{"key":"other","patch":{"ops":[{"path":{},"operation":{"Set":{"value":{"String":{"value":"deep"}}}}}]}}}]}}}]}}}"""
+        """{"Modify":{"key":"outer","patch":{"ops":[{"path":{},"operation":{"ObjectEdit":{"ops":[{"Add":{"key":"nested","value":{"a":1}}},{"Modify":{"key":"other","patch":{"ops":[{"path":{},"operation":{"Set":{"value":"deep"}}}]}}}]}}}]}}}"""
       )
     },
     test("ArrayOp.Modify containing ObjectEdit containing ArrayEdit") {
@@ -360,7 +376,7 @@ object JsonPatchSerializationSpec extends SchemaBaseSpec {
       // Verify roundtrip works for complex nested structure
       import zio.blocks.schema.json._
       val schema  = Schema[JsonPatch]
-      val codec   = schema.derive(JsonBinaryCodecDeriver)
+      val codec   = schema.derive(JsonCodecDeriver)
       val encoded = codec.encode(patch, WriterConfig)
       val decoded = codec.decode(encoded, ReaderConfig)
       assertTrue(decoded == Right(patch))
@@ -411,7 +427,7 @@ object JsonPatchSerializationSpec extends SchemaBaseSpec {
 
       // Step 2: Serialize the patch to JSON bytes
       val patchSchema = Schema[JsonPatch]
-      val patchCodec  = patchSchema.derive(JsonBinaryCodecDeriver)
+      val patchCodec  = patchSchema.derive(JsonCodecDeriver)
       val patchBytes  = patchCodec.encode(patch, WriterConfig)
 
       // Step 3: Deserialize the patch from JSON bytes
@@ -500,7 +516,7 @@ object JsonPatchSerializationSpec extends SchemaBaseSpec {
 
       // Serialize and deserialize
       val patchSchema = Schema[JsonPatch]
-      val patchCodec  = patchSchema.derive(JsonBinaryCodecDeriver)
+      val patchCodec  = patchSchema.derive(JsonCodecDeriver)
       val encoded     = patchCodec.encode(complexPatch, WriterConfig)
       val decoded     = patchCodec.decode(encoded, ReaderConfig)
 
@@ -522,7 +538,7 @@ object JsonPatchSerializationSpec extends SchemaBaseSpec {
       )
 
       val patchSchema = Schema[JsonPatch]
-      val patchCodec  = patchSchema.derive(JsonBinaryCodecDeriver)
+      val patchCodec  = patchSchema.derive(JsonCodecDeriver)
       val jsonString  = patchCodec.encodeToString(patch, WriterConfig)
 
       // Verify it's valid JSON that can be parsed back

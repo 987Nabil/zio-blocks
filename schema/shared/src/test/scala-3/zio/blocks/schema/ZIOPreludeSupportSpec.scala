@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema
 
 import zio.blocks.schema.binding.Binding
@@ -122,6 +138,19 @@ object ZIOPreludeSupportSpec extends SchemaBaseSpec {
       )
       val schema = Schema.derived[NRecord]
       assert(schema.fromDynamicValue(schema.toDynamicValue(value)))(isRight(equalTo(value)))
+    },
+    test("implicit Either schemas preserve primitive layouts for newtypes") {
+      implicit val intSchema: Schema[NInt.Type]   = Schema.derived[NInt.Type]
+      implicit val longSchema: Schema[NLong.Type] = Schema.derived[NLong.Type]
+
+      def eitherSchema[A: Schema, B: Schema]: Schema[Either[A, B]] = Schema[Either[A, B]]
+
+      val schema = eitherSchema[NInt.Type, NLong.Type]
+      val left   = Left(NInt(1)): Either[NInt.Type, NLong.Type]
+      val right  = Right(NLong(2L)): Either[NInt.Type, NLong.Type]
+
+      assert(schema.fromDynamicValue(schema.toDynamicValue(left)))(isRight(equalTo(left))) &&
+      assert(schema.fromDynamicValue(schema.toDynamicValue(right)))(isRight(equalTo(right)))
     },
     test("TypeId.of uses user-provided given TypeId when available") {
       val schemaTypeId  = Schema[Name].reflect.typeId

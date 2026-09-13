@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.http
 
 import zio.test._
@@ -89,6 +105,46 @@ object MethodSpec extends HttpModelBaseSpec {
           Method.POST.toString == "POST",
           Method.DELETE.toString == "DELETE"
         )
+      }
+    ),
+    suite("matches")(
+      test("ANY matches every standard method") {
+        assertTrue(
+          Method.ANY.matches(Method.GET),
+          Method.GET.matches(Method.ANY),
+          Method.ANY.matches(Method.POST)
+        )
+      },
+      test("combined methods match any constituent method") {
+        val combined = Method.GET #| Method.POST
+        assertTrue(
+          combined.matches(Method.GET),
+          combined.matches(Method.POST),
+          !combined.matches(Method.DELETE)
+        )
+      }
+    ),
+    suite("#|")(
+      test("combines distinct methods into Methods") {
+        val combined = Method.GET #| Method.POST
+        assertTrue(combined == Method.Methods(Set(Method.GET, Method.POST)))
+      },
+      test("returns ANY when either side is ANY") {
+        assertTrue(
+          (Method.ANY #| Method.GET) == Method.ANY,
+          (Method.GET #| Method.ANY) == Method.ANY
+        )
+      },
+      test("deduplicates repeated methods") {
+        assertTrue((Method.GET #| Method.GET) == Method.GET)
+      }
+    ),
+    suite("special methods")(
+      test("render formats ANY as wildcard") {
+        assertTrue(Method.render(Method.ANY) == "*")
+      },
+      test("standardMethods contains all 9 standard methods") {
+        assertTrue(Method.standardMethods == Method.values.iterator.toSet)
       }
     )
   )

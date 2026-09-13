@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema.toon
 
 import zio.blocks.chunk.Chunk
@@ -22,7 +38,7 @@ object ToonTestUtils {
   def roundTrip[A](
     value: A,
     expectedToon: String,
-    codec: ToonBinaryCodec[A],
+    codec: ToonCodec[A],
     readerConfig: ReaderConfig = readerConfig,
     writerConfig: WriterConfig = writerConfig
   ): TestResult = {
@@ -68,7 +84,7 @@ object ToonTestUtils {
   def decode[A](
     toon: String,
     expectedValue: A,
-    codec: ToonBinaryCodec[A],
+    codec: ToonCodec[A],
     readerConfig: ReaderConfig = readerConfig
   ): TestResult = {
     val toonBytes = toon.getBytes(UTF_8)
@@ -94,12 +110,12 @@ object ToonTestUtils {
     expected: DynamicValue,
     readerConfig: ReaderConfig = ReaderConfig
   ): TestResult = {
-    val codec = ToonBinaryCodec.dynamicValueCodec
+    val codec = ToonCodec.dynamicValueCodec
     assert(codec.decode(toon, readerConfig))(isRight(equalTo(expected)))
   }
 
   def decodeDynamicError(toon: String, error: String, readerConfig: ReaderConfig = ReaderConfig): TestResult = {
-    val codec = ToonBinaryCodec.dynamicValueCodec
+    val codec = ToonCodec.dynamicValueCodec
     assert(codec.decode(toon, readerConfig))(isLeft(hasError(error)))
   }
 
@@ -108,7 +124,7 @@ object ToonTestUtils {
     expectedToon: String,
     writerConfig: WriterConfig = WriterConfig
   ): TestResult = {
-    val codec  = ToonBinaryCodec.dynamicValueCodec
+    val codec  = ToonCodec.dynamicValueCodec
     val result = codec.encodeToString(value, writerConfig)
     assert(result)(equalTo(expectedToon))
   }
@@ -119,24 +135,24 @@ object ToonTestUtils {
   def decodeError[A](invalidToon: Array[Byte], error: String)(implicit schema: Schema[A]): TestResult =
     decodeError(invalidToon, error, getOrDeriveCodec(schema))
 
-  def decodeError[A](invalidToon: String, error: String, codec: ToonBinaryCodec[A]): TestResult =
+  def decodeError[A](invalidToon: String, error: String, codec: ToonCodec[A]): TestResult =
     decodeError(invalidToon.getBytes(UTF_8), error, codec)
 
   def decodeError[A](
     invalidToon: String,
     error: String,
-    codec: ToonBinaryCodec[A],
+    codec: ToonCodec[A],
     readerConfig: ReaderConfig
   ): TestResult =
     decodeError(invalidToon.getBytes(UTF_8), error, codec, readerConfig)
 
-  def decodeError[A](invalidToon: Array[Byte], error: String, codec: ToonBinaryCodec[A]): TestResult =
+  def decodeError[A](invalidToon: Array[Byte], error: String, codec: ToonCodec[A]): TestResult =
     decodeError(invalidToon, error, codec, ReaderConfig)
 
   def decodeError[A](
     invalidToon: Array[Byte],
     error: String,
-    codec: ToonBinaryCodec[A],
+    codec: ToonCodec[A],
     readerConfig: ReaderConfig
   ): TestResult =
     assert(codec.decode(invalidToon, readerConfig))(isLeft(hasError(error))) &&
@@ -157,7 +173,7 @@ object ToonTestUtils {
   def encode[A](
     value: A,
     expectedToon: String,
-    codec: ToonBinaryCodec[A],
+    codec: ToonCodec[A],
     writerConfig: WriterConfig = writerConfig
   ): TestResult = {
     val heapByteBuffer = ByteBuffer.allocate(maxBufSize)
@@ -217,11 +233,11 @@ object ToonTestUtils {
 
   private[this] def writerConfig = WriterConfig
 
-  private[this] def getOrDeriveCodec[A](schema: Schema[A]): ToonBinaryCodec[A] =
-    codecs.computeIfAbsent(schema, _.deriving(ToonBinaryCodecDeriver).derive).asInstanceOf[ToonBinaryCodec[A]]
+  private[this] def getOrDeriveCodec[A](schema: Schema[A]): ToonCodec[A] =
+    codecs.computeIfAbsent(schema, _.deriving(ToonCodecDeriver).derive).asInstanceOf[ToonCodec[A]]
 
-  def deriveCodec[A: Schema](deriverModifier: ToonBinaryCodecDeriver => ToonBinaryCodecDeriver): ToonBinaryCodec[A] =
-    Schema[A].derive(deriverModifier(ToonBinaryCodecDeriver))
+  def deriveCodec[A: Schema](deriverModifier: ToonCodecDeriver => ToonCodecDeriver): ToonCodec[A] =
+    Schema[A].derive(deriverModifier(ToonCodecDeriver))
 
   private[this] def toInputStream(bs: Array[Byte]): java.io.InputStream = new java.io.ByteArrayInputStream(bs)
 
@@ -230,7 +246,7 @@ object ToonTestUtils {
   private[this] def toDirectByteBuffer(bs: Array[Byte]): ByteBuffer =
     ByteBuffer.allocateDirect(maxBufSize).put(bs).position(0).limit(bs.length)
 
-  private[this] val codecs     = new ConcurrentHashMap[Schema[?], ToonBinaryCodec[?]]()
+  private[this] val codecs     = new ConcurrentHashMap[Schema[?], ToonCodec[?]]()
   private[this] val maxBufSize = 4096
 
   object ToonDynamicValueGen {
@@ -310,7 +326,7 @@ object ToonTestUtils {
         case Variant(caseName, v) =>
           discriminatorField match {
             case Some(_) => Variant(caseName, normalize(v, discriminatorField))
-            case None    => Record(Chunk((caseName, normalize(v, discriminatorField))))
+            case _       => Record(Chunk((caseName, normalize(v, discriminatorField))))
           }
         case DynamicValue.Map(entries) =>
           val fields = entries.map { case (k, v) =>

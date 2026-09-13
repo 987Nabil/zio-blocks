@@ -21,9 +21,9 @@ import java.math.BigInteger
 import java.nio.{BufferOverflowException, ByteBuffer}
 import java.time._
 import java.util.UUID
-import zio.blocks.schema.binding.RegisterOffset
+import zio.blocks.schema.ByteArrayAccess
+import zio.blocks.schema.binding.{Registers, RegisterOffset}
 import zio.blocks.schema.binding.RegisterOffset.RegisterOffset
-import zio.blocks.schema.binding.Registers
 import zio.blocks.schema.json.JsonWriter._
 import scala.annotation.{nowarn, tailrec}
 import java.nio.charset.StandardCharsets.UTF_8
@@ -103,7 +103,7 @@ final class JsonWriter private[json] (
    *
    * @param x
    *   the `Char` value to write
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in the case of `Char` value is a part of the surrogate pair
    */
   def writeKey(x: Char): Unit = {
@@ -156,7 +156,7 @@ final class JsonWriter private[json] (
    *
    * @param x
    *   the `Float` value to write
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   if the value is non-finite
    */
   def writeKey(x: Float): Unit = {
@@ -171,7 +171,7 @@ final class JsonWriter private[json] (
    *
    * @param x
    *   the `Double` value to write
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   if the value is non-finite
    */
   def writeKey(x: Double): Unit = {
@@ -225,7 +225,7 @@ final class JsonWriter private[json] (
    *
    * @param x
    *   the `String` value to write
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   if the provided string has an illegal surrogate pair
    */
   def writeKey(x: String): Unit = {
@@ -273,11 +273,11 @@ final class JsonWriter private[json] (
       }
       buf(pos) = '"'
       pos += 1
-      var i = 0
-      while (i < len) {
-        buf(pos) = x.charAt(i).toByte
+      var idx = 0
+      while (idx < len) {
+        buf(pos) = x.charAt(idx).toByte
         pos += 1
-        i += 1
+        idx += 1
       }
       ByteArrayAccess.setInt(buf, pos, 0x203a22)
       if (indention > 0) pos += 1
@@ -464,15 +464,8 @@ final class JsonWriter private[json] (
 
   def registers: Registers = this.stack
 
-  /**
-   * Throws a [[JsonBinaryCodecError]] with the given error message.
-   *
-   * @param msg
-   *   the error message
-   * @throws JsonBinaryCodecError
-   *   always
-   */
-  def encodeError(msg: String): Nothing = throw new JsonBinaryCodecError(Nil, msg)
+  @noinline
+  private[this] def encodeError(msg: String): Nothing = throw new JsonCodecError(Nil, msg)
 
   /**
    * Writes a `BigDecimal` value as a JSON value.
@@ -513,7 +506,7 @@ final class JsonWriter private[json] (
    *
    * @param x
    *   the `String` value to write
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   if the provided string has an illegal surrogate pair
    */
   def writeVal(x: String): Unit = {
@@ -557,11 +550,11 @@ final class JsonWriter private[json] (
       } else comma = true
       buf(pos) = '"'
       pos += 1
-      var i = 0
-      while (i < len) {
-        buf(pos) = x.charAt(i).toByte
+      var idx = 0
+      while (idx < len) {
+        buf(pos) = x.charAt(idx).toByte
         pos += 1
-        i += 1
+        idx += 1
       }
       buf(pos) = '"'
       count = pos + 1
@@ -760,7 +753,7 @@ final class JsonWriter private[json] (
    *
    * @param x
    *   the `Char` value to write
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in the case of `Char` value is a part of the surrogate pair
    */
   def writeVal(x: Char): Unit = {
@@ -795,7 +788,7 @@ final class JsonWriter private[json] (
    *
    * @param x
    *   the `Float` value to write
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   if the value is non-finite
    */
   def writeVal(x: Float): Unit = {
@@ -808,7 +801,7 @@ final class JsonWriter private[json] (
    *
    * @param x
    *   the `Double` value to write
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   if the value is non-finite
    */
   def writeVal(x: Double): Unit = {
@@ -913,7 +906,7 @@ final class JsonWriter private[json] (
    *
    * @param x
    *   the `Float` value to write
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   if the value is non-finite
    */
   def writeValAsString(x: Float): Unit = {
@@ -928,7 +921,7 @@ final class JsonWriter private[json] (
    *
    * @param x
    *   the `Double` value to write
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   if the value is non-finite
    */
   def writeValAsString(x: Double): Unit = {
@@ -939,7 +932,7 @@ final class JsonWriter private[json] (
   }
 
   /**
-   * Writes a byte array as a JSON raw binary value.
+   * Writes a byte array as a JSON raw value.
    *
    * @param bs
    *   the byte array to write
@@ -950,7 +943,7 @@ final class JsonWriter private[json] (
   }
 
   /**
-   * Writes a [[java.time.Duration]] value as a JSON raw binary value.
+   * Writes a [[java.time.Duration]] value as a JSON raw value.
    *
    * @param x
    *   the [[java.time.Duration]] value to write
@@ -961,7 +954,7 @@ final class JsonWriter private[json] (
   }
 
   /**
-   * Writes a [[java.time.Instant]] value as a JSON raw binary value.
+   * Writes a [[java.time.Instant]] value as a JSON raw value.
    *
    * @param x
    *   the [[java.time.Instant]] value to write
@@ -972,7 +965,7 @@ final class JsonWriter private[json] (
   }
 
   /**
-   * Writes a [[java.time.LocalDate]] value as a JSON raw binary value.
+   * Writes a [[java.time.LocalDate]] value as a JSON raw value.
    *
    * @param x
    *   the [[java.time.LocalDate]] value to write
@@ -983,7 +976,7 @@ final class JsonWriter private[json] (
   }
 
   /**
-   * Writes a [[java.time.LocalDateTime]] value as a JSON raw binary value.
+   * Writes a [[java.time.LocalDateTime]] value as a JSON raw value.
    *
    * @param x
    *   the [[java.time.LocalDateTime]] value to write
@@ -994,7 +987,7 @@ final class JsonWriter private[json] (
   }
 
   /**
-   * Writes a [[java.time.LocalTime]] value as a JSON raw binary value.
+   * Writes a [[java.time.LocalTime]] value as a JSON raw value.
    *
    * @param x
    *   the [[java.time.LocalTime]] value to write
@@ -1005,7 +998,7 @@ final class JsonWriter private[json] (
   }
 
   /**
-   * Writes a [[java.time.MonthDay]] value as a JSON raw binary value.
+   * Writes a [[java.time.MonthDay]] value as a JSON raw value.
    *
    * @param x
    *   the [[java.time.MonthDay]] value to write
@@ -1016,7 +1009,7 @@ final class JsonWriter private[json] (
   }
 
   /**
-   * Writes a [[java.time.OffsetDateTime]] value as a JSON raw binary value.
+   * Writes a [[java.time.OffsetDateTime]] value as a JSON raw value.
    *
    * @param x
    *   the [[java.time.OffsetDateTime]] value to write
@@ -1027,7 +1020,7 @@ final class JsonWriter private[json] (
   }
 
   /**
-   * Writes a [[java.time.OffsetTime]] value as a JSON raw binary value.
+   * Writes a [[java.time.OffsetTime]] value as a JSON raw value.
    *
    * @param x
    *   the [[java.time.OffsetTime]] value to write
@@ -1038,7 +1031,7 @@ final class JsonWriter private[json] (
   }
 
   /**
-   * Writes a [[java.time.Period]] value as a JSON raw binary value.
+   * Writes a [[java.time.Period]] value as a JSON raw value.
    *
    * @param x
    *   the [[java.time.Period]] value to write
@@ -1049,7 +1042,7 @@ final class JsonWriter private[json] (
   }
 
   /**
-   * Writes a [[java.time.ZonedDateTime]] value as a JSON raw binary value.
+   * Writes a [[java.time.ZonedDateTime]] value as a JSON raw value.
    *
    * @param x
    *   the [[java.time.ZonedDateTime]] value to write
@@ -1109,7 +1102,7 @@ final class JsonWriter private[json] (
    * @param config
    *   the writer configuration
    */
-  private[json] def write[A](codec: JsonBinaryCodec[A], x: A, out: OutputStream, config: WriterConfig): Unit =
+  private[json] def write[A](codec: JsonCodec[A], x: A, out: OutputStream, config: WriterConfig): Unit =
     try {
       top = 0
       maxTop = 0
@@ -1141,7 +1134,7 @@ final class JsonWriter private[json] (
    * @return
    *   the encoded JSON as a byte array
    */
-  private[json] def write[A](codec: JsonBinaryCodec[A], x: A, config: WriterConfig): Array[Byte] =
+  private[json] def write[A](codec: JsonCodec[A], x: A, config: WriterConfig): Array[Byte] =
     try {
       top = 0
       maxTop = 0
@@ -1170,7 +1163,7 @@ final class JsonWriter private[json] (
    * @param config
    *   the writer configuration
    */
-  private[json] def write[A](codec: JsonBinaryCodec[A], x: A, bbuf: ByteBuffer, config: WriterConfig): Unit = {
+  private[json] def write[A](codec: JsonCodec[A], x: A, bbuf: ByteBuffer, config: WriterConfig): Unit = {
     top = 0
     maxTop = 0
     indention = 0
@@ -1223,7 +1216,7 @@ final class JsonWriter private[json] (
    * @return
    *   the encoded JSON as a string
    */
-  private[json] def writeToString[A](codec: JsonBinaryCodec[A], x: A, config: WriterConfig): String =
+  private[json] def writeToString[A](codec: JsonCodec[A], x: A, config: WriterConfig): String =
     try {
       top = 0
       maxTop = 0
@@ -1240,6 +1233,7 @@ final class JsonWriter private[json] (
       top = -1
     }
 
+  @inline
   private[this] def writeNestedStart(b: Byte): Unit = {
     writeOptionalCommaAndIndentionBeforeKey()
     writeBytes(b)
@@ -1250,6 +1244,7 @@ final class JsonWriter private[json] (
     }
   }
 
+  @inline
   private[this] def writeNestedEnd(b: Byte): Unit = {
     comma = true
     if (indention != 0) {
@@ -1311,6 +1306,7 @@ final class JsonWriter private[json] (
     count = pos + 1
   }
 
+  @inline
   private[this] def writeRawBytes(bs: Array[Byte]): Unit = {
     var pos       = count
     var step      = Math.max(config.preferredBufSize, limit - pos)
@@ -1548,6 +1544,7 @@ final class JsonWriter private[json] (
     count = pos
   }
 
+  @inline
   private[this] def writeEscapedUnicode(ch: Int, pos: Int, buf: Array[Byte], ds: Array[Short]): Int = {
     ByteArrayAccess.setShort(buf, pos, 0x755c)
     val d1 = ds(ch >> 8)
@@ -1556,12 +1553,14 @@ final class JsonWriter private[json] (
     pos + 6
   }
 
+  @inline
   private[this] def writeEscapedUnicode(b: Byte, pos: Int, buf: Array[Byte], ds: Array[Short]): Int = {
     ByteArrayAccess.setInt(buf, pos, 0x3030755c)
     ByteArrayAccess.setShort(buf, pos + 4, ds(b & 0xff))
     pos + 6
   }
 
+  @noinline
   private[this] def illegalSurrogateError(): Nothing = encodeError("illegal char sequence of surrogate pair")
 
   private[this] def writeBigInteger(x: BigInteger, ss: Array[BigInteger]): Unit = {
@@ -1594,18 +1593,14 @@ final class JsonWriter private[json] (
       val ds  = digits
       val s   = exp >> 63
       exp = (exp + s) ^ s
-      ByteArrayAccess.setShort(buf, pos, (0x2b45L - (s << 9)).toShort)
-      pos += 2
+      ByteArrayAccess.setShort(buf, pos, 0x2d45L.toShort)
+      pos += 1 - s.toInt
       var q = exp
-      if (exp < 100000000L) {
-        pos += digitCount(exp)
-        count = pos
-      } else {
+      if (exp < 100000000L) count = writePositiveIntDigits(q.toInt, pos, buf, ds)
+      else {
         q = Math.multiplyHigh(exp, 6189700196426901375L) >>> 25 // divide a positive long by 100000000
-        pos += digitCount(q)
-        count = write8Digits(exp - q * 100000000L, pos, buf, ds)
+        count = write8Digits(exp - q * 100000000L, writePositiveIntDigits(q.toInt, pos, buf, ds), buf, ds)
       }
-      writePositiveIntDigits(q.toInt, pos, buf, ds)
     }
   }
 
@@ -1661,13 +1656,14 @@ final class JsonWriter private[json] (
       writeBigDecimalRemainder(qr(1), scale, blockScale, n - 1, ss)
     }
 
-  private[this] def calculateTenPow18SquareNumber(bitLen: Int): Int = {
-    val m = Math.max(
-      (bitLen * 71828554L >> 32).toInt - 1,
-      1
-    ) // Math.max((x.bitLength * Math.log(2) / Math.log(1e18)).toInt - 1, 1)
-    31 - java.lang.Integer.numberOfLeadingZeros(m)
-  }
+  @inline
+  private[this] def calculateTenPow18SquareNumber(bitLen: Int): Int =
+    31 - java.lang.Integer.numberOfLeadingZeros(
+      Math.max(
+        (bitLen * 71828554L >> 32).toInt - 1, // Math.max((x.bitLength * Math.log(2) / Math.log(1e18)).toInt - 1, 1)
+        1
+      )
+    )
 
   private[this] def insertDotWithZeroes(digits: Int, pad: Int, lastPos: Int, buf: Array[Byte]): Int = {
     var pos    = lastPos + pad + 1
@@ -1758,17 +1754,12 @@ final class JsonWriter private[json] (
           buf(pos) = '-'
           pos += 1
         }
-        var q       = hours
-        var lastPos = pos
-        if (hours < 100000000L) {
-          lastPos += digitCount(hours)
-          pos = lastPos
-        } else {
+        var q = hours
+        if (hours < 100000000L) pos = writePositiveIntDigits(q.toInt, pos, buf, ds)
+        else {
           q = Math.multiplyHigh(hours, 6189700196426901375L) >>> 25 // divide a positive long by 100000000
-          lastPos += digitCount(q)
-          pos = write8Digits(hours - q * 100000000L, lastPos, buf, ds)
+          pos = write8Digits(hours - q * 100000000L, writePositiveIntDigits(q.toInt, pos, buf, ds), buf, ds)
         }
-        writePositiveIntDigits(q.toInt, lastPos, buf, ds)
         ByteArrayAccess.setShort(buf, pos, 0x2248)
         pos += 1
       }
@@ -1873,6 +1864,7 @@ final class JsonWriter private[json] (
     writeInstant(year, month, day, (epochSecond - epochDay * 86400).toInt, nano, isRaw)
   }
 
+  @inline
   private[this] def writeInstant(year: Int, month: Int, day: Int, secsOfDay: Int, nano: Int, isRaw: Boolean): Unit = {
     var pos = ensureBufCapacity(39) // 39 == Instant.MAX.toString.length + 2
     val buf = this.buf
@@ -1884,14 +1876,14 @@ final class JsonWriter private[json] (
     pos = writeYear(year, pos, buf, ds)
     ByteArrayAccess.setLong(buf, pos, ds(month) << 8 | ds(day).toLong << 32 | 0x5400002d00002dL)
     pos += 7
-    val y1 =
+    val q1 =
       secsOfDay * 37283 // Based on James Anhalt's algorithm: https://jk-jeon.github.io/posts/2022/02/jeaiii-algorithm/
-    val y2 = (y1 & 0x7ffffff) * 15
-    val y3 = (y2 & 0x1ffffff) * 15
+    val q2 = (q1 & 0x7ffffff) * 15
+    val q3 = (q2 & 0x1ffffff) * 15
     ByteArrayAccess.setLong(
       buf,
       pos,
-      ds(y1 >>> 27) | ds(y2 >> 25).toLong << 24 | ds(y3 >> 23).toLong << 48 | 0x3a00003a0000L
+      ds(q1 >>> 27) | ds(q2 >> 25).toLong << 24 | ds(q3 >> 23).toLong << 48 | 0x3a00003a0000L
     )
     pos += 8
     if (nano != 0) pos = writeNanos(nano, pos, buf, ds)
@@ -2021,8 +2013,7 @@ final class JsonWriter private[json] (
               pos += 1
             }
           }
-          pos += digitCount(q0.toLong)
-          writePositiveIntDigits(q0, pos, buf, ds)
+          pos = writePositiveIntDigits(q0, pos, buf, ds)
           buf(pos) = b
           pos += 1
         }
@@ -2096,26 +2087,26 @@ final class JsonWriter private[json] (
   private[this] def writeZoneOffset(x: ZoneOffset): Unit = {
     var pos = ensureBufCapacity(12) // 12 == number of bytes in Long and Int
     val buf = this.buf
-    var y   = x.getTotalSeconds
-    if (y == 0) {
+    var q   = x.getTotalSeconds
+    if (q == 0) {
       ByteArrayAccess.setInt(buf, pos, 0x225a22)
       pos += 3
     } else {
       val ds = digits
-      val s  = y >> 31
-      y =
-        ((y + s) ^ s) * 37283 // Based on James Anhalt's algorithm: https://jk-jeon.github.io/posts/2022/02/jeaiii-algorithm/
-      val m = ds(y >>> 27) << 16 | 0x2230303a00002b22L - (s << 9)
-      if ((y & 0x7ff8000) == 0) { // check if totalSeconds is divisible by 3600
-        ByteArrayAccess.setLong(buf, pos, m)
+      val s  = q >> 31
+      q =
+        ((q + s) ^ s) * 37283 // Based on James Anhalt's algorithm: https://jk-jeon.github.io/posts/2022/02/jeaiii-algorithm/
+      val bs = ds(q >>> 27) << 16 | 0x2230303a00002b22L - (s << 9)
+      if ((q & 0x7ff8000) == 0) { // check if totalSeconds is divisible by 3600
+        ByteArrayAccess.setLong(buf, pos, bs)
         pos += 8
       } else {
-        y &= 0x7ffffff
-        y *= 15
-        ByteArrayAccess.setLong(buf, pos, ds(y >> 25).toLong << 40 | m)
-        if ((y & 0x1f80000) == 0) pos += 8 // check if totalSeconds is divisible by 60
+        q &= 0x7ffffff
+        q *= 15
+        ByteArrayAccess.setLong(buf, pos, ds(q >> 25).toLong << 40 | bs)
+        if ((q & 0x1f80000) == 0) pos += 8 // check if totalSeconds is divisible by 60
         else {
-          ByteArrayAccess.setInt(buf, pos + 7, ds((y & 0x1ffffff) * 15 >> 23) << 8 | 0x2200003a)
+          ByteArrayAccess.setInt(buf, pos + 7, ds((q & 0x1ffffff) * 15 >> 23) << 8 | 0x2200003a)
           pos += 11
         }
       }
@@ -2144,6 +2135,7 @@ final class JsonWriter private[json] (
     pos + 7
   }
 
+  @inline
   private[this] def writeYear(year: Int, pos: Int, buf: Array[Byte], ds: Array[Short]): Int =
     if (year >= 0 && year < 10000) write4Digits(year, pos, buf, ds)
     else writeYearWithSign(year, pos, buf, ds)
@@ -2159,11 +2151,7 @@ final class JsonWriter private[json] (
     buf(pos) = b
     pos += 1
     if (q0 < 10000) write4Digits(q0, pos, buf, ds)
-    else {
-      pos += digitCount(q0.toLong)
-      writePositiveIntDigits(q0, pos, buf, ds)
-      pos
-    }
+    else writePositiveIntDigits(q0, pos, buf, ds)
   }
 
   private[this] def writeLocalTime(x: LocalTime, pos: Int, buf: Array[Byte], ds: Array[Short]): Int = {
@@ -2183,59 +2171,63 @@ final class JsonWriter private[json] (
   }
 
   private[this] def writeNanos(x: Int, pos: Int, buf: Array[Byte], ds: Array[Short]): Int = {
-    val y1 =
+    val q1 =
       x * 1441151881L // Based on James Anhalt's algorithm for 9 digits: https://jk-jeon.github.io/posts/2022/02/jeaiii-algorithm/
-    val y2 = (y1 & 0x1ffffffffffffffL) * 100
-    var m  = y1 >>> 57 << 8 | ds((y2 >>> 57).toInt) << 16 | 0x302e
-    if ((y2 & 0x1fffff800000000L) == 0) { // check if q0 is divisible by 1000000
-      ByteArrayAccess.setInt(buf, pos, m.toInt)
+    val m  = 0x1ffffffffffffffL
+    val q  = 100L
+    val q2 = (q1 & m) * q
+    var bs = q1 >>> 57 << 8 | ds((q2 >>> 57).toInt) << 16 | 0x302e
+    if ((q2 & 0x1fffff800000000L) == 0) { // check if q0 is divisible by 1000000
+      ByteArrayAccess.setInt(buf, pos, bs.toInt)
       pos + 4
     } else {
-      val y3 = (y2 & 0x1ffffffffffffffL) * 100
-      val y4 = (y3 & 0x1ffffffffffffffL) * 100
-      m |= ds((y3 >>> 57).toInt).toLong << 32
-      val d = ds((y4 >>> 57).toInt)
-      ByteArrayAccess.setLong(buf, pos, m | d.toLong << 48)
-      if ((y4 & 0x1ff000000000000L) == 0 && d <= 0x3039) pos + 7 // check if x is divisible by 1000
+      val q3 = (q2 & m) * q
+      val q4 = (q3 & m) * q
+      bs |= ds((q3 >>> 57).toInt).toLong << 32
+      val d = ds((q4 >>> 57).toInt)
+      ByteArrayAccess.setLong(buf, pos, bs | d.toLong << 48)
+      if ((q4 & 0x1ff000000000000L) == 0 && d <= 0x3039) pos + 7 // check if x is divisible by 1000
       else {
-        ByteArrayAccess.setShort(buf, pos + 8, ds(((y4 & 0x1ffffffffffffffL) * 100 >>> 57).toInt))
+        ByteArrayAccess.setShort(buf, pos + 8, ds(((q4 & m) * q >>> 57).toInt))
         pos + 10
       }
     }
   }
 
   private[this] def writeOffset(x: ZoneOffset, pos: Int, buf: Array[Byte], ds: Array[Short]): Int = {
-    var y = x.getTotalSeconds
-    if (y == 0) {
+    var q = x.getTotalSeconds
+    if (q == 0) {
       ByteArrayAccess.setShort(buf, pos, 0x225a)
       pos + 2
     } else {
-      val s = y >> 31
-      y =
-        ((y + s) ^ s) * 37283 // Based on James Anhalt's algorithm: https://jk-jeon.github.io/posts/2022/02/jeaiii-algorithm/
-      val m = ds(y >>> 27) << 8 | 0x2230303a00002bL - (s << 1)
-      if ((y & 0x7ff8000) == 0) { // check if totalSeconds is divisible by 3600
-        ByteArrayAccess.setLong(buf, pos, m)
+      val s = q >> 31
+      q =
+        ((q + s) ^ s) * 37283 // Based on James Anhalt's algorithm: https://jk-jeon.github.io/posts/2022/02/jeaiii-algorithm/
+      val bs = ds(q >>> 27) << 8 | 0x2230303a00002bL - (s << 1)
+      if ((q & 0x7ff8000) == 0) { // check if totalSeconds is divisible by 3600
+        ByteArrayAccess.setLong(buf, pos, bs)
         pos + 7
       } else {
-        y &= 0x7ffffff
-        y *= 15
-        ByteArrayAccess.setLong(buf, pos, ds(y >> 25).toLong << 32 | m)
-        if ((y & 0x1f80000) == 0) pos + 7 // check if totalSeconds is divisible by 60
+        q &= 0x7ffffff
+        q *= 15
+        ByteArrayAccess.setLong(buf, pos, ds(q >> 25).toLong << 32 | bs)
+        if ((q & 0x1f80000) == 0) pos + 7 // check if totalSeconds is divisible by 60
         else {
-          ByteArrayAccess.setInt(buf, pos + 6, ds((y & 0x1ffffff) * 15 >> 23) << 8 | 0x2200003a)
+          ByteArrayAccess.setInt(buf, pos + 6, ds((q & 0x1ffffff) * 15 >> 23) << 8 | 0x2200003a)
           pos + 10
         }
       }
     }
   }
 
+  @inline
   private[this] def write3Digits(x: Int, pos: Int, buf: Array[Byte], ds: Array[Short]): Int = {
     val q1 = x * 1311 >> 17 // divide a small positive int by 100
     ByteArrayAccess.setInt(buf, pos, ds(x - q1 * 100) << 8 | q1 | '0')
     pos + 3
   }
 
+  @inline
   private[this] def write4Digits(x: Int, pos: Int, buf: Array[Byte], ds: Array[Short]): Int = {
     val q1 = x * 5243 >> 19 // divide a small positive int by 100
     val d1 = ds(x - q1 * 100) << 16
@@ -2244,26 +2236,27 @@ final class JsonWriter private[json] (
     pos + 4
   }
 
+  @inline
   private[this] def write8Digits(x: Long, pos: Int, buf: Array[Byte], ds: Array[Short]): Int = {
-    val y1 =
-      x * 140737489 // Based on James Anhalt's algorithm for 8 digits: https://jk-jeon.github.io/posts/2022/02/jeaiii-algorithm/
-    val m1 = 0x7fffffffffffL
-    val m2 = 100L
-    val y2 = (y1 & m1) * m2
-    val y3 = (y2 & m1) * m2
-    val y4 = (y3 & m1) * m2
-    val d1 = ds((y1 >> 47).toInt)
-    val d2 = ds((y2 >> 47).toInt) << 16
-    val d3 = ds((y3 >> 47).toInt).toLong << 32
-    val d4 = ds((y4 >> 47).toInt).toLong << 48
+    val q1 =
+      x * 140737489L // Based on James Anhalt's algorithm for 8 digits: https://jk-jeon.github.io/posts/2022/02/jeaiii-algorithm/
+    val m  = 0x7fffffffffffL
+    val q  = 100L
+    val q2 = (q1 & m) * q
+    val q3 = (q2 & m) * q
+    val q4 = (q3 & m) * q
+    val d1 = ds((q1 >> 47).toInt)
+    val d2 = ds((q2 >> 47).toInt) << 16
+    val d3 = ds((q3 >> 47).toInt).toLong << 32
+    val d4 = ds((q4 >> 47).toInt).toLong << 48
     ByteArrayAccess.setLong(buf, pos, d1 | d2 | d3 | d4)
     pos + 8
   }
 
+  @inline
   private[this] def write18Digits(x: Long, pos: Int, buf: Array[Byte], ds: Array[Short]): Int = {
-    val m1 = 6189700196426901375L
-    val q1 = Math.multiplyHigh(x, m1) >>> 25  // divide a positive long by 100000000
-    val q2 = Math.multiplyHigh(q1, m1) >>> 25 // divide a positive long by 100000000
+    val q2 = Math.multiplyHigh(x, 8307674973655724206L) >>> 52 // divide a positive long by 10^16
+    val q1 = Math.multiplyHigh(x, 6189700196426901375L) >>> 25 // divide a positive long by 100000000
     ByteArrayAccess.setShort(buf, pos, ds(q2.toInt))
     write8Digits(x - q1 * 100000000L, write8Digits(q1 - q2 * 100000000L, pos + 2, buf, ds), buf, ds)
   }
@@ -2279,31 +2272,40 @@ final class JsonWriter private[json] (
       pos += 1
     }
     if (q0 < 100) {
-      if (q0 < 10) {
-        buf(pos) = (q0 | '0').toByte
-        pos += 1
-      } else {
-        ByteArrayAccess.setShort(buf, pos, ds(q0))
-        pos += 2
-      }
+      ByteArrayAccess.setShort(
+        buf,
+        pos,
+        if (q0 < 10) {
+          pos += 1
+          (q0 | '0').toShort
+        } else {
+          pos += 2
+          ds(q0)
+        }
+      )
     } else if (q0 < 10000) {
       val q1 = q0 * 5243 >> 19 // divide a small positive int by 100
       val d2 = ds(q0 - q1 * 100)
-      if (q0 < 1000) {
-        ByteArrayAccess.setInt(buf, pos, q1 | '0' | d2 << 8)
-        pos += 3
-      } else {
-        ByteArrayAccess.setInt(buf, pos, ds(q1) | d2 << 16)
-        pos += 4
-      }
-    } else {
-      val y1 =
-        q0 * 429497L // Based on James Anhalt's algorithm for 5 digits: https://jk-jeon.github.io/posts/2022/02/jeaiii-algorithm/
-      val y2 = (y1 & 0xffffffffL) * 100
-      val y3 = (y2 & 0xffffffffL) * 100
-      val d1 = (y1 >> 32).toInt | '0'
-      val d2 = ds((y2 >> 32).toInt) << 8
-      val d3 = ds((y3 >> 32).toInt).toLong << 24
+      ByteArrayAccess.setInt(
+        buf,
+        pos,
+        if (q0 < 1000) {
+          pos += 3
+          q1 | '0' | d2 << 8
+        } else {
+          pos += 4
+          ds(q1) | d2 << 16
+        }
+      )
+    } else { // Based on James Anhalt's algorithm for 5 digits: https://jk-jeon.github.io/posts/2022/02/jeaiii-algorithm/
+      val q1 = q0 * 429497L
+      val m  = 0xffffffffL
+      val q  = 100L
+      val q2 = (q1 & m) * q
+      val q3 = (q2 & m) * q
+      val d1 = (q1 >> 32).toInt | '0'
+      val d2 = ds((q2 >> 32).toInt) << 8
+      val d3 = ds((q3 >> 32).toInt).toLong << 24
       ByteArrayAccess.setLong(buf, pos, d1 | d2 | d3)
       pos += 5
     }
@@ -2313,7 +2315,6 @@ final class JsonWriter private[json] (
   private[this] def writeInt(x: Int): Unit = {
     var pos = ensureBufCapacity(11) // Int.MinValue.toString.length
     val buf = this.buf
-    val ds  = digits
     var q0  = x
     if (x < 0) {
       q0 = -q0
@@ -2324,11 +2325,10 @@ final class JsonWriter private[json] (
         pos += 1
       }
     }
-    pos += digitCount(q0.toLong)
-    writePositiveIntDigits(q0, pos, buf, ds)
-    count = pos
+    count = writePositiveIntDigits(q0, pos, buf, digits)
   }
 
+  @inline
   private[this] def writeLong(x: Long): Unit =
     count = writeLong(x, ensureBufCapacity(20), buf) // Long.MinValue.toString.length
 
@@ -2345,28 +2345,16 @@ final class JsonWriter private[json] (
         pos += 3
       }
     }
-    val m1      = 100000000L
-    var q2      = q0
-    var lastPos = pos
-    if (q0 < m1) {
-      lastPos += digitCount(q0)
-      pos = lastPos
-    } else {
-      val m2 = 6189700196426901375L
-      val q1 = Math.multiplyHigh(q0, m2) >>> 25 // divide a positive long by 100000000
-      if (q1 < m1) {
-        q2 = q1
-        lastPos += digitCount(q1)
-        pos = lastPos
-      } else {
-        q2 = Math.multiplyHigh(q1, m2) >>> 25 // divide a small positive long by 100000000
-        lastPos += digitCount(q2)
-        pos = write8Digits(q1 - q2 * m1, lastPos, buf, ds)
+    if (q0 < 100000000L) writePositiveIntDigits(q0.toInt, pos, buf, ds)
+    else {
+      val q1 = Math.multiplyHigh(q0, 6189700196426901375L) >>> 25 // divide a positive long by 100000000
+      if (q1 < 100000000L) pos = writePositiveIntDigits(q1.toInt, pos, buf, ds)
+      else {
+        val q2 = Math.multiplyHigh(q0, 8307674973655724206L) >>> 52 // divide a positive long by 10^16
+        pos = write8Digits(q1 - q2 * 100000000L, writePositiveIntDigits(q2.toInt, pos, buf, ds), buf, ds)
       }
-      pos = write8Digits(q0 - q1 * m1, pos, buf, ds)
+      write8Digits(q0 - q1 * 100000000L, pos, buf, ds)
     }
-    writePositiveIntDigits(q2.toInt, lastPos, buf, ds)
-    pos
   }
 
   // Based on the ingenious work of Xiang JunBo and Wang TieJun
@@ -2398,15 +2386,15 @@ final class JsonWriter private[json] (
         } else if (e2 == 105) illegalNumberError(x)
         if (m2IEEE == 0) e10 = (e2 * 315653 - 131237) >> 20
         else e10 = (e2 * 315653) >> 20
-        val h     = (((e10 + 1) * -217707) >> 16) + e2
-        val pow10 = floatPow10s(31 - e10)
-        val hi64  = unsignedMultiplyHigh1(
+        val h               = (((e10 + 1) * -217707) >> 16) + e2
+        val pow10           = floatPow10s(31 - e10)
+        val halfUlpPlusEven = (pow10 >>> (28 - h)) + ((m2IEEE + 1) & 1)
+        val hi64            = unsignedMultiplyHigh1(
           pow10,
           m2.toLong << (h + 37)
         ) // TODO: when dropping JDK 17 support replace by Math.unsignedMultiplyHigh(pow10, m2.toLong << (h + 37))
+        val dotOne = hi64 & 0xfffffffffL
         m10 = (hi64 >>> 36).toInt * 10
-        val halfUlpPlusEven = (pow10 >>> (28 - h)) + ((m2IEEE + 1) & 1)
-        val dotOne          = hi64 & 0xfffffffffL
         if (
           {
             if (m2IEEE == 0) halfUlpPlusEven >>> 1
@@ -2459,9 +2447,19 @@ final class JsonWriter private[json] (
         pos = lastPos
       } else {
         pos += len
-        writePositiveIntDigits(m10, pos, buf, ds)
         ByteArrayAccess.setShort(buf, pos, 0x302e)
-        pos += 2
+        val lastPos = pos
+        while ({
+          pos -= 2
+          m10 >= 100
+        }) {
+          val q1 = (m10 * 1374389535L >> 37).toInt // divide a positive int by 100
+          ByteArrayAccess.setShort(buf, pos, ds(m10 - q1 * 100))
+          m10 = q1
+        }
+        if (m10 < 10) buf(pos + 1) = (m10 | '0').toByte
+        else ByteArrayAccess.setShort(buf, pos, ds(m10))
+        pos = lastPos + 2
       }
     }
     count = pos
@@ -2500,34 +2498,47 @@ final class JsonWriter private[json] (
         } else if (e2 == 972) illegalNumberError(x)
         if (m2IEEE == 0) e10 = (e2 * 315653 - 131237) >> 20
         else e10 = (e2 * 315653) >> 20
-        val h       = (((e10 + 1) * -217707) >> 16) + e2
-        val pow10s  = doublePow10s
-        val i       = 292 - e10 << 1
-        val pow10_1 = pow10s(i)
-        val pow10_2 = pow10s(i + 1)
-        val cb      = m2 << (h + 7)
-        val lo64_1  = unsignedMultiplyHigh2(
+        val h               = (((e10 + 1) * -217707) >> 16) + e2
+        val pow10s          = doublePow10s
+        val i               = 292 - e10 << 1
+        val pow10_1         = pow10s(i)
+        val pow10_2         = pow10s(i + 1)
+        val halfUlpPlusEven = (pow10_1 >>> -h) + ((m2.toInt + 1) & 1)
+        val cb              = m2 << (h + 7)
+        val lo64_1          = unsignedMultiplyHigh2(
           pow10_2,
           cb
         ) // TODO: when dropping JDK 17 support replace by Math.unsignedMultiplyHigh(pow10_2, cb)
         val lo64_2 = pow10_1 * cb
-        var hi64   = unsignedMultiplyHigh2(
+        var hi64   = unsignedMultiplyHigh1(
           pow10_1,
           cb
         ) // TODO: when dropping JDK 17 support replace by Math.unsignedMultiplyHigh(pow10_1, cb)
         val lo64 = lo64_1 + lo64_2
         hi64 += compareUnsigned(lo64, lo64_1) >>> 31
-        m10 = (hi64 >>> 6) * 10L
-        val halfUlpPlusEven = (pow10_1 >>> -h) + ((m2.toInt + 1) & 1)
-        val dotOne          = (hi64 << 58) | (lo64 >>> 6)
-        if (compareUnsigned(halfUlpPlusEven, -1 - dotOne) > 0) m10 += 10L
-        else if (m2IEEE != 0) {
-          if (compareUnsigned(halfUlpPlusEven, dotOne) <= 0) m10 = calculateM10(hi64, lo64, dotOne)
-        } else {
-          val tmp = (dotOne >>> 4) * 10L
-          if (compareUnsigned((tmp << 4) >>> 4, (halfUlpPlusEven >>> 4) * 5L) > 0) m10 += (tmp >>> 60).toInt + 1
-          else if (compareUnsigned(halfUlpPlusEven >>> 1, dotOne) <= 0) m10 = calculateM10(hi64, lo64, dotOne)
-        }
+        val dotOne = (hi64 << 58) | (lo64 >>> 6)
+        var mCorr  = 0
+        if ({
+          if (compareUnsigned(-1 - dotOne, halfUlpPlusEven) < 0) {
+            mCorr = 10
+            false
+          } else if (m2IEEE != 0) compareUnsigned(halfUlpPlusEven, dotOne) <= 0
+          else {
+            val tmp = (dotOne >>> 4) * 10L
+            if (compareUnsigned(tmp & 0x0fffffffffffffffL, (halfUlpPlusEven >>> 4) * 5L) > 0) {
+              mCorr = (tmp >>> 60).toInt + 1
+              false
+            } else compareUnsigned(halfUlpPlusEven >>> 1, dotOne) <= 0
+          }
+        }) {
+          m10 = (hi64 * 10L + unsignedMultiplyHigh2(
+            lo64,
+            10L
+          ) + { // TODO: when dropping JDK 17 support replace by Math.unsignedMultiplyHigh(lo64, 10L)
+            if (dotOne == 0x4000000000000000L) 0x1fL
+            else 0x20L
+          }) >>> 6
+        } else m10 = (hi64 >>> 6) * 10L + mCorr
       }
       val len = digitCount(m10)
       e10 += len - 1
@@ -2570,30 +2581,35 @@ final class JsonWriter private[json] (
         pos = lastPos
       } else {
         pos += len
-        writePositiveIntDigits(m10.toInt, pos, buf, ds)
         ByteArrayAccess.setShort(buf, pos, 0x302e)
-        pos += 2
+        var q0      = m10.toInt
+        val lastPos = pos
+        while ({
+          pos -= 2
+          q0 >= 100
+        }) {
+          val q1 = (q0 * 1374389535L >> 37).toInt // divide a positive int by 100
+          ByteArrayAccess.setShort(buf, pos, ds(q0 - q1 * 100))
+          q0 = q1
+        }
+        if (q0 < 10) buf(pos + 1) = (q0 | '0').toByte
+        else ByteArrayAccess.setShort(buf, pos, ds(q0))
+        pos = lastPos + 2
       }
     }
     count = pos
   }
 
-  private[this] def calculateM10(hi: Long, lo: Long, dotOne: Long): Long =
-    (hi * 10L + unsignedMultiplyHigh2(
-      lo,
-      10L
-    ) + { // TODO: when dropping JDK 17 support replace by Math.unsignedMultiplyHigh(lo64, 10L)
-      if (dotOne == 0x4000000000000000L) 0x1fL
-      else 0x20L
-    }) >>> 6
-
+  @inline
   private[this] def unsignedMultiplyHigh2(x: Long, y: Long): Long =
     Math.multiplyHigh(x, y) + (y & (x >> 63)) // Use implementation that works only when y is positive
 
   // Adoption of a nice trick from Daniel Lemire's blog that works for numbers up to 10^18:
   // https://lemire.me/blog/2021/06/03/computing-the-number-of-digits-of-an-integer-even-faster/
+  @inline
   private[this] def digitCount(x: Long): Int = (offsets(java.lang.Long.numberOfLeadingZeros(x)) + x >> 58).toInt
 
+  @inline
   private[this] def writeSignificantFractionDigits(
     x: Long,
     p: Int,
@@ -2620,6 +2636,7 @@ final class JsonWriter private[json] (
     writeSignificantFractionDigits(q0, pos, posLim, buf, ds)
   }
 
+  @inline
   private[this] def writeSignificantFractionDigits(
     x: Int,
     p: Int,
@@ -2644,6 +2661,7 @@ final class JsonWriter private[json] (
     pos + ((0x3039 - d) >>> 31)
   }
 
+  @inline
   private[this] def writeFractionDigits(x: Int, p: Int, posLim: Int, buf: Array[Byte], ds: Array[Short]): Unit = {
     var q0  = x
     var pos = p
@@ -2655,31 +2673,119 @@ final class JsonWriter private[json] (
     }
   }
 
-  private[this] def writePositiveIntDigits(x: Int, p: Int, buf: Array[Byte], ds: Array[Short]): Unit = {
-    var q0  = x
-    var pos = p
-    while ({
-      pos -= 2
-      q0 >= 100
-    }) {
-      val q1 = (q0 * 1374389535L >> 37).toInt // divide a positive int by 100
-      ByteArrayAccess.setShort(buf, pos, ds(q0 - q1 * 100))
-      q0 = q1
+  private[this] def writePositiveIntDigits(q0: Int, p: Int, buf: Array[Byte], ds: Array[Short]): Int = {
+    var pos = p // Based on James Anhalt's algorithm: https://jk-jeon.github.io/posts/2022/02/jeaiii-algorithm/
+    if (q0 < 100) {
+      ByteArrayAccess.setShort(
+        buf,
+        pos,
+        if (q0 < 10) {
+          pos += 1
+          (q0 | '0').toByte
+        } else {
+          pos += 2
+          ds(q0)
+        }
+      )
+    } else if (q0 < 10000) {
+      val q1 = q0 * 5243 >> 19 // divide a small positive int by 100
+      val d2 = ds(q0 - q1 * 100) << 8
+      ByteArrayAccess.setInt(
+        buf,
+        pos,
+        if (q0 < 1000) {
+          pos += 3
+          q1 | d2 | '0'
+        } else {
+          pos += 4
+          ds(q1) | d2 << 8
+        }
+      )
+    } else if (q0 < 1000000) {
+      val q1 = q0 * 429497L
+      val m  = 0xffffffffL
+      val q  = 100L
+      val q2 = (q1 & m) * q
+      val q3 = (q2 & m) * q
+      val r1 = (q1 >>> 32).toInt
+      val d2 = ds((q2 >>> 32).toInt).toLong << 8
+      val d3 = ds((q3 >>> 32).toInt).toLong << 24
+      ByteArrayAccess.setLong(
+        buf,
+        pos,
+        if (q0 < 100000) {
+          pos += 5
+          r1 | d2 | d3 | '0'
+        } else {
+          pos += 6
+          ds(r1) | (d2 | d3) << 8
+        }
+      )
+    } else if (q0 < 100000000) {
+      val q1 = q0 * 140737489L
+      val m  = 0x7fffffffffffL
+      val q  = 100L
+      val q2 = (q1 & m) * q
+      val q3 = (q2 & m) * q
+      val q4 = (q3 & m) * q
+      val r1 = (q1 >>> 47).toInt
+      val d2 = ds((q2 >>> 47).toInt) << 8
+      val d3 = ds((q3 >>> 47).toInt).toLong << 24
+      val d4 = ds((q4 >>> 47).toInt).toLong << 40
+      ByteArrayAccess.setLong(
+        buf,
+        pos,
+        if (q0 < 10000000) {
+          pos += 7
+          r1 | d2 | d3 | d4 | '0'
+        } else {
+          pos += 8
+          ds(r1) | (d2 | d3 | d4) << 8
+        }
+      )
+    } else {
+      val q1 = q0 * 1441151881L
+      val m  = 0x1ffffffffffffffL
+      val q  = 100L
+      val q2 = (q1 & m) * q
+      val q3 = (q2 & m) * q
+      val q4 = (q3 & m) * q
+      val q5 = (q4 & m) * q
+      val r1 = (q1 >>> 57).toInt
+      ByteArrayAccess.setShort(
+        buf,
+        pos,
+        if (q0 < 1000000000) {
+          pos += 9
+          (r1 | '0').toByte
+        } else {
+          pos += 10
+          ds(r1)
+        }
+      )
+      val d2 = ds((q2 >>> 57).toInt)
+      val d3 = ds((q3 >>> 57).toInt) << 16
+      val d4 = ds((q4 >>> 57).toInt).toLong << 32
+      val d5 = ds((q5 >>> 57).toInt).toLong << 48
+      ByteArrayAccess.setLong(buf, pos - 8, d2 | d3 | d4 | d5)
     }
-    if (q0 < 10) buf(pos + 1) = (q0 | '0').toByte
-    else ByteArrayAccess.setShort(buf, pos, ds(q0))
+    pos
   }
 
+  @noinline
   private[this] def illegalNumberError(x: Float): Nothing = encodeError("illegal number: " + x)
 
+  @noinline
   private[this] def illegalNumberError(x: Double): Nothing = encodeError("illegal number: " + x)
 
+  @inline
   private[this] def ensureBufCapacity(required: Int): Int = {
     val pos = count
     if (pos + required <= limit) pos
     else flushAndGrowBuf(required, pos)
   }
 
+  @noinline
   private[this] def flushAndGrowBuf(required: Int, pos: Int): Int =
     if (bbuf ne null) {
       bbuf.put(buf, 0, pos)
@@ -2695,11 +2801,14 @@ final class JsonWriter private[json] (
       pos
     }
 
+  @noinline
   private[this] def growBuf(required: Int): Unit =
     setBuf(java.util.Arrays.copyOf(buf, (-1 >>> Integer.numberOfLeadingZeros(limit | required)) + 1))
 
+  @inline
   private[this] def reallocateBufToPreferredSize(): Unit = setBuf(new Array[Byte](config.preferredBufSize))
 
+  @inline
   private[this] def setBuf(buf: Array[Byte]): Unit = {
     this.buf = buf
     limit = buf.length
@@ -3456,15 +3565,15 @@ object JsonWriter {
   @volatile private[this] var tenPow18Squares: Array[BigInteger] = Array(BigInteger.valueOf(1000000000000000000L))
 
   final private def getTenPow18Squares(n: Int): Array[BigInteger] = {
-    var ss = tenPow18Squares
-    var i  = ss.length
-    if (n >= i) {
-      var s = ss(i - 1)
+    var ss  = tenPow18Squares
+    var idx = ss.length
+    if (n >= idx) {
+      var s = ss(idx - 1)
       ss = java.util.Arrays.copyOf(ss, n + 1)
-      while (i <= n) {
+      while (idx <= n) {
         s = s.multiply(s)
-        ss(i) = s
-        i += 1
+        ss(idx) = s
+        idx += 1
       }
       tenPow18Squares = ss
     }
@@ -3513,15 +3622,15 @@ object JsonWriter {
         } else if (e2 == 105) throw new IllegalArgumentException("Infinity or NaN")
         if (m2IEEE == 0) e10 = (e2 * 315653 - 131237) >> 20
         else e10 = (e2 * 315653) >> 20
-        val h     = (((e10 + 1) * -217707) >> 16) + e2
-        val pow10 = floatPow10s(31 - e10)
-        val hi64  = unsignedMultiplyHigh1(
+        val h               = (((e10 + 1) * -217707) >> 16) + e2
+        val pow10           = floatPow10s(31 - e10)
+        val halfUlpPlusEven = (pow10 >>> (28 - h)) + ((m2IEEE + 1) & 1)
+        val hi64            = unsignedMultiplyHigh1(
           pow10,
           m2.toLong << (h + 37)
         ) // TODO: when dropping JDK 17 support replace by Math.unsignedMultiplyHigh(pow10, m2.toLong << (h + 37))
+        val dotOne = hi64 & 0xfffffffffL
         m10 = (hi64 >>> 36).toInt * 10
-        val halfUlpPlusEven = (pow10 >>> (28 - h)) + ((m2IEEE + 1) & 1)
-        val dotOne          = hi64 & 0xfffffffffL
         if (
           {
             if (m2IEEE == 0) halfUlpPlusEven >>> 1
@@ -3543,6 +3652,10 @@ object JsonWriter {
       ) {
         e10 += 2
         m10 = q
+      }
+      if (e10 == 0) {
+        m10 *= 10
+        e10 -= 1
       }
       val sign = bits >> 31
       new BigDecimal(java.math.BigDecimal.valueOf((m10 ^ sign) - sign, -e10))
@@ -3571,34 +3684,47 @@ object JsonWriter {
         } else if (e2 == 972) throw new IllegalArgumentException("Infinity or NaN")
         if (m2IEEE == 0) e10 = (e2 * 315653 - 131237) >> 20
         else e10 = (e2 * 315653) >> 20
-        val h       = (((e10 + 1) * -217707) >> 16) + e2
-        val pow10s  = doublePow10s
-        val i       = 292 - e10 << 1
-        val pow10_1 = pow10s(i)
-        val pow10_2 = pow10s(i + 1)
-        val cb      = m2 << (h + 7)
-        val lo64_1  = unsignedMultiplyHigh2(
+        val h               = (((e10 + 1) * -217707) >> 16) + e2
+        val pow10s          = doublePow10s
+        val i               = 292 - e10 << 1
+        val pow10_1         = pow10s(i)
+        val pow10_2         = pow10s(i + 1)
+        val halfUlpPlusEven = (pow10_1 >>> -h) + ((m2.toInt + 1) & 1)
+        val cb              = m2 << (h + 7)
+        val lo64_1          = unsignedMultiplyHigh2(
           pow10_2,
           cb
         ) // TODO: when dropping JDK 17 support replace by Math.unsignedMultiplyHigh(pow10_2, cb)
         val lo64_2 = pow10_1 * cb
-        var hi64   = unsignedMultiplyHigh2(
+        var hi64   = unsignedMultiplyHigh1(
           pow10_1,
           cb
         ) // TODO: when dropping JDK 17 support replace by Math.unsignedMultiplyHigh(pow10_1, cb)
         val lo64 = lo64_1 + lo64_2
         hi64 += compareUnsigned(lo64, lo64_1) >>> 31
-        m10 = (hi64 >>> 6) * 10L
-        val halfUlpPlusEven = (pow10_1 >>> -h) + ((m2.toInt + 1) & 1)
-        val dotOne          = (hi64 << 58) | (lo64 >>> 6)
-        if (compareUnsigned(halfUlpPlusEven, -1 - dotOne) > 0) m10 += 10L
-        else if (m2IEEE != 0) {
-          if (compareUnsigned(halfUlpPlusEven, dotOne) <= 0) m10 = calculateM10(hi64, lo64, dotOne)
-        } else {
-          val tmp = (dotOne >>> 4) * 10L
-          if (compareUnsigned((tmp << 4) >>> 4, (halfUlpPlusEven >>> 4) * 5L) > 0) m10 += (tmp >>> 60).toInt + 1
-          else if (compareUnsigned(halfUlpPlusEven >>> 1, dotOne) <= 0) m10 = calculateM10(hi64, lo64, dotOne)
-        }
+        val dotOne = (hi64 << 58) | (lo64 >>> 6)
+        var mCorr  = 0
+        if ({
+          if (compareUnsigned(-1 - dotOne, halfUlpPlusEven) < 0) {
+            mCorr = 10
+            false
+          } else if (m2IEEE != 0) compareUnsigned(halfUlpPlusEven, dotOne) <= 0
+          else {
+            val tmp = (dotOne >>> 4) * 10L
+            if (compareUnsigned(tmp & 0x0fffffffffffffffL, (halfUlpPlusEven >>> 4) * 5L) > 0) {
+              mCorr = (tmp >>> 60).toInt + 1
+              false
+            } else compareUnsigned(halfUlpPlusEven >>> 1, dotOne) <= 0
+          }
+        }) {
+          m10 = (hi64 * 10L + unsignedMultiplyHigh2(
+            lo64,
+            10L
+          ) + { // TODO: when dropping JDK 17 support replace by Math.unsignedMultiplyHigh(lo64, 10L)
+            if (dotOne == 0x4000000000000000L) 0x1fL
+            else 0x20L
+          }) >>> 6
+        } else m10 = (hi64 >>> 6) * 10L + mCorr
       }
       var q1 = 0L
       while (
@@ -3623,23 +3749,20 @@ object JsonWriter {
           m10 = q2
         }
       }
+      if (e10 == 0) {
+        m10 *= 10
+        e10 -= 1
+      }
       val sign = bits >> 63
       new BigDecimal(java.math.BigDecimal.valueOf((m10 ^ sign) - sign, -e10))
     }
   }
 
-  private[this] def calculateM10(hi: Long, lo: Long, dotOne: Long): Long =
-    (hi * 10L + unsignedMultiplyHigh2(
-      lo,
-      10L
-    ) + { // TODO: when dropping JDK 17 support replace by Math.unsignedMultiplyHigh(lo64, 10L)
-      if (dotOne == 0x4000000000000000L) 0x1fL
-      else 0x20L
-    }) >>> 6
-
+  @inline
   private[this] def unsignedMultiplyHigh1(x: Long, y: Long): Long =
     Math.multiplyHigh(x, y) + y // Use implementation that works only when x is negative and y is positive
 
+  @inline
   private[this] def unsignedMultiplyHigh2(x: Long, y: Long): Long =
     Math.multiplyHigh(x, y) + (y & (x >> 63)) // Use implementation that works only when y is positive
 }

@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema.csv
 
 import zio.blocks.schema._
@@ -369,20 +385,6 @@ object CsvPrimitiveCodecSpec extends SchemaBaseSpec {
       test("all primitive codecs have single-element header") {
         val c = codec(PrimitiveType.Int(Validation.None))
         assertTrue(c.headerNames == IndexedSeq("value"))
-      }
-    ),
-    suite("nullValue")(
-      test("Int nullValue is 0") {
-        val c = codec(PrimitiveType.Int(Validation.None))
-        assertTrue(c.nullValue == 0)
-      },
-      test("Boolean nullValue is false") {
-        val c = codec(PrimitiveType.Boolean(Validation.None))
-        assertTrue(c.nullValue == false)
-      },
-      test("String nullValue is empty") {
-        val c = codec(PrimitiveType.String(Validation.None))
-        assertTrue(c.nullValue == "")
       }
     )
   )

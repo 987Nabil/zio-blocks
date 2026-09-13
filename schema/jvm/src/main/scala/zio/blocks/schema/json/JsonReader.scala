@@ -22,10 +22,9 @@ import java.nio.ByteBuffer
 import java.time._
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-import zio.blocks.schema.DynamicOptic
-import zio.blocks.schema.binding.RegisterOffset
+import zio.blocks.schema.ByteArrayAccess
+import zio.blocks.schema.binding.{RegisterOffset, Registers}
 import zio.blocks.schema.binding.RegisterOffset.RegisterOffset
-import zio.blocks.schema.binding.Registers
 import zio.blocks.schema.json.JsonReader._
 import scala.annotation.{nowarn, switch, tailrec}
 
@@ -78,86 +77,92 @@ final class JsonReader private[json] (
   private[this] var zoneIdKey: Key         = null
 
   /**
-   * Throws a [[JsonBinaryCodecError]] indicating that a required field with the
-   * given name is missing.
+   * Throws a [[JsonCodecError]] indicating that a required field with the given
+   * name is missing.
    *
    * @param reqField
    *   the name of the missing required field
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   always
    */
+  @noinline
   def requiredFieldError(reqField: String): Nothing = {
-    var i = appendString("missing required field \"", 0)
-    i = appendString(reqField, i)
-    i = appendChar('"', i)
-    decodeError(i)
+    var idx = appendString("missing required field \"", 0)
+    idx = appendString(reqField, idx)
+    idx = appendChar('"', idx)
+    decodeError(idx)
   }
 
   /**
-   * Throws a [[JsonBinaryCodecError]] indicating that a field with the given
-   * name is duplicated.
+   * Throws a [[JsonCodecError]] indicating that a field with the given name is
+   * duplicated.
    *
    * @param len
    *   the length of the duplicated field name in the internal char buffer
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   always
    */
+  @noinline
   def duplicatedKeyError(len: Int): Nothing = {
-    var i = prependString("duplicated field \"", len)
-    i = appendChar('"', i)
-    decodeError(i)
+    var idx = prependString("duplicated field \"", len)
+    idx = appendChar('"', idx)
+    decodeError(idx)
   }
 
   /**
-   * Throws a [[JsonBinaryCodecError]] indicating that an unexpected field with
-   * the given name was encountered.
+   * Throws a [[JsonCodecError]] indicating that an unexpected field with the
+   * given name was encountered.
    *
    * @param len
    *   the length of the unexpected field name in the internal char buffer
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   always
    */
+  @noinline
   def unexpectedKeyError(len: Int): Nothing = {
-    var i = prependString("unexpected field \"", len)
-    i = appendChar('"', i)
-    decodeError(i)
+    var idx = prependString("unexpected field \"", len)
+    idx = appendChar('"', idx)
+    decodeError(idx)
   }
 
   /**
-   * Throws a [[JsonBinaryCodecError]] indicating that an illegal discriminator
-   * field name was encountered.
+   * Throws a [[JsonCodecError]] indicating that an illegal discriminator field
+   * name was encountered.
    */
+  @noinline
   def discriminatorError(): Nothing = decodeError("illegal discriminator")
 
   /**
-   * Throws a [[JsonBinaryCodecError]] indicating that an illegal value was
+   * Throws a [[JsonCodecError]] indicating that an illegal value was
    * encountered for the given discriminator field.
    *
    * @param discriminatorFieldName
    *   the name of the discriminator field
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   always
    */
+  @noinline
   def discriminatorValueError(discriminatorFieldName: String): Nothing = {
-    var i = appendString("illegal value of discriminator field \"", 0)
-    i = appendString(discriminatorFieldName, i)
-    i = appendChar('"', i)
-    decodeError(i)
+    var idx = appendString("illegal value of discriminator field \"", 0)
+    idx = appendString(discriminatorFieldName, idx)
+    idx = appendChar('"', idx)
+    decodeError(idx)
   }
 
   /**
-   * Throws a [[JsonBinaryCodecError]] indicating that an illegal enum value
-   * with the given length was encountered.
+   * Throws a [[JsonCodecError]] indicating that an illegal enum value with the
+   * given length was encountered.
    *
    * @param len
    *   the length of the illegal enum value in the internal char buffer.
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   always
    */
+  @noinline
   def enumValueError(len: Int): Nothing = {
-    var i = prependString("illegal enum value \"", len)
-    i = appendChar('"', i)
-    decodeError(i)
+    var idx = prependString("illegal enum value \"", len)
+    idx = appendChar('"', idx)
+    decodeError(idx)
   }
 
   /**
@@ -175,7 +180,7 @@ final class JsonReader private[json] (
    *   the name of the JSON key to skip to
    * @return
    *   `true` if the key was found, `false` otherwise
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or invalid encoding of JSON key
    */
   def skipToKey(key: String): Boolean = {
@@ -193,11 +198,11 @@ final class JsonReader private[json] (
    *   in case of calling without a preceding call of 'setMark()'
    */
   def rollbackToMark(): Unit = {
-    var i = markNum
-    if (i == 0) missingSetMarkOperation()
-    i -= 1
-    head = marks(i)
-    markNum = i
+    var idx = markNum
+    if (idx == 0) missingSetMarkOperation()
+    idx -= 1
+    head = marks(idx)
+    markNum = idx
   }
 
   /**
@@ -218,7 +223,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   the length of the key in the internal char buffer
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or invalid encoding of JSON key
    */
   def readKeyAsCharBuf(): Int = {
@@ -235,7 +240,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a `String` instance of the parsed JSON key
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or invalid encoding of JSON key
    */
   def readKeyAsString(): String = {
@@ -251,7 +256,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a [[java.time.Duration]] instance of the parsed JSON key
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON key
    */
   def readKeyAsDuration(): Duration = {
@@ -266,7 +271,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a [[java.time.Instant]] instance of the parsed JSON key
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON key
    */
   def readKeyAsInstant(): Instant = {
@@ -281,7 +286,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a [[java.time.LocalDate]] instance of the parsed JSON key
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON key
    */
   def readKeyAsLocalDate(): LocalDate = {
@@ -296,7 +301,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a [[java.time.LocalDateTime]] instance of the parsed JSON key
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON key
    */
   def readKeyAsLocalDateTime(): LocalDateTime = {
@@ -311,7 +316,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a [[java.time.LocalTime]] instance of the parsed JSON key
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON key
    */
   def readKeyAsLocalTime(): LocalTime = {
@@ -326,7 +331,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a [[java.time.MonthDay]] instance of the parsed JSON key
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON key
    */
   def readKeyAsMonthDay(): MonthDay = {
@@ -341,7 +346,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a [[java.time.OffsetDateTime]] instance of the parsed JSON key
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON key
    */
   def readKeyAsOffsetDateTime(): OffsetDateTime = {
@@ -356,7 +361,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a [[java.time.OffsetTime]] instance of the parsed JSON key
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON key
    */
   def readKeyAsOffsetTime(): OffsetTime = {
@@ -371,7 +376,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a [[java.time.Period]] instance of the parsed JSON key
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON key
    */
   def readKeyAsPeriod(): Period = {
@@ -386,7 +391,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a [[java.time.Year]] instance of the parsed JSON key
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON key
    */
   def readKeyAsYear(): Year = {
@@ -400,7 +405,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a [[java.time.YearMonth]] instance of the parsed JSON key
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON key
    */
   def readKeyAsYearMonth(): YearMonth = {
@@ -415,7 +420,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a [[java.time.ZonedDateTime]] instance of the parsed JSON key
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON key
    */
   def readKeyAsZonedDateTime(): ZonedDateTime = {
@@ -430,7 +435,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a [[java.time.ZoneId]] instance of the parsed JSON key
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON key
    */
   def readKeyAsZoneId(): ZoneId = {
@@ -445,7 +450,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a [[java.time.ZoneOffset]] instance of the parsed JSON key
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON key
    */
   def readKeyAsZoneOffset(): ZoneOffset = {
@@ -460,7 +465,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a `Boolean` value of the parsed JSON key
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON key
    */
   def readKeyAsBoolean(): Boolean = {
@@ -476,7 +481,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a `Byte` value of the parsed JSON key
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON key
    */
   def readKeyAsByte(): Byte = {
@@ -492,7 +497,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a `Char` value of the parsed JSON key
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON key or
    *   exceeding capacity of `Char` or when parsed char is a part of a surrogate
    *   pair
@@ -510,7 +515,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a `Short` value of the parsed JSON key
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON key
    */
   def readKeyAsShort(): Short = {
@@ -526,7 +531,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   an `Int` value of the parsed JSON key
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON key
    */
   def readKeyAsInt(): Int = {
@@ -542,7 +547,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a `Long` value of the parsed JSON key
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON key
    */
   def readKeyAsLong(): Long = {
@@ -558,7 +563,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a `Float` value of the parsed JSON key
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON key
    */
   def readKeyAsFloat(): Float = {
@@ -574,7 +579,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a `Double` value of the parsed JSON key
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON key
    */
   def readKeyAsDouble(): Double = {
@@ -591,7 +596,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a `BigInt` instance of the parsed JSON key
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON key or
    *   exceeding of the default limit
    */
@@ -605,7 +610,7 @@ final class JsonReader private[json] (
    *   the maximum number of decimal digits allowed in the parsed `BigInt` value
    * @return
    *   a `BigInt` instance of the parsed JSON key
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON key or
    *   exceeding of the provided limit
    */
@@ -624,7 +629,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a `BigDecimal` instance of the parsed JSON key
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON key or
    *   exceeding of default limits
    */
@@ -643,7 +648,7 @@ final class JsonReader private[json] (
    *   the maximum number of decimal digits allowed
    * @return
    *   a `BigDecimal` instance of the parsed JSON key
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON key or
    *   exceeding of provided limits
    */
@@ -660,7 +665,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a [[java.util.UUID]] instance of the parsed JSON key
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON key
    */
   def readKeyAsUUID(): UUID = {
@@ -675,7 +680,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a `Byte` value of the parsed JSON value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or detection of leading zero or
    *   illegal format of JSON value or exceeding capacity of `Byte`
    */
@@ -686,7 +691,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a `Char` value of the parsed JSON value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or invalid encoding of JSON value
    *   or exceeding capacity of `Char` or when parsed char is a part of a
    *   surrogate pair
@@ -703,7 +708,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a `Short` value of the parsed JSON value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or detection of leading zero or
    *   illegal format of JSON value or exceeding capacity of `Short`
    */
@@ -714,7 +719,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   an `Int` value of the parsed JSON value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or detection of leading zero or
    *   illegal format of JSON value or exceeding capacity of `Int`
    */
@@ -725,7 +730,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a `Long` value of the parsed JSON value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or detection of leading zero or
    *   illegal format of JSON value or exceeding capacity of `Long`
    */
@@ -736,7 +741,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a `Double` value of the parsed JSON value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or detection of leading zero or
    *   illegal format of JSON value
    */
@@ -747,7 +752,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a `Float` value of the parsed JSON value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or detection of leading zero or
    *   illegal format of JSON value
    */
@@ -756,11 +761,11 @@ final class JsonReader private[json] (
   /**
    * Reads a JSON number value into a `BigInt` instance with the default limit
    * of allowed digits. In case of unexpected JSON value throws a
-   * [[JsonBinaryCodecError]].
+   * [[JsonCodecError]].
    *
    * @return
    *   a `BigInt` instance of the parsed JSON value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or detection of leading zero or
    *   illegal format of JSON value or exceeding of the default limit
    */
@@ -769,13 +774,13 @@ final class JsonReader private[json] (
   /**
    * Reads a JSON number value into a `BigInt` instance with the provided limit
    * of allowed digits. In case of unexpected JSON value throws a
-   * [[JsonBinaryCodecError]].
+   * [[JsonCodecError]].
    *
    * @param digitsLimit
    *   the maximum number of decimal digits allowed in the parsed `BigInt` value
    * @return
    *   a `BigInt` instance of the parsed JSON value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or detection of leading zero or
    *   illegal format of JSON value or exceeding of the default limit
    */
@@ -785,11 +790,11 @@ final class JsonReader private[json] (
    * Reads a JSON number value into a `BigDecimal` instance with the default
    * limit of allowed digits for mantissa, the default limit for scale, and the
    * default instance of [[java.math.MathContext]] for precision. In case of
-   * unexpected JSON value throws a [[JsonBinaryCodecError]].
+   * unexpected JSON value throws a [[JsonCodecError]].
    *
    * @return
    *   a `BigDecimal` instance of the parsed JSON value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or detection of leading zero or
    *   illegal format of JSON value or exceeding of default limits
    */
@@ -800,7 +805,7 @@ final class JsonReader private[json] (
    * Reads a JSON number value into a `BigDecimal` instance with the provided
    * limit of allowed digits for mantissa, the provided limit for scale, and the
    * provided instance of [[java.math.MathContext]] for precision. In case of
-   * unexpected JSON value throws a [[JsonBinaryCodecError]].
+   * unexpected JSON value throws a [[JsonCodecError]].
    *
    * @param mc
    *   the precision to use
@@ -810,7 +815,7 @@ final class JsonReader private[json] (
    *   the maximum number of decimal digits allowed
    * @return
    *   a `BigDecimal` instance of the parsed JSON value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or detection of leading zero or
    *   illegal format of JSON value or exceeding of provided limits
    */
@@ -819,11 +824,11 @@ final class JsonReader private[json] (
 
   /**
    * Reads a JSON string value into a `String` instance. In case of unexpected
-   * JSON value throws a [[JsonBinaryCodecError]].
+   * JSON value throws a [[JsonCodecError]].
    *
    * @return
    *   a `String` instance of the parsed JSON value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or invalid encoding of JSON value
    */
   def readString(): String = {
@@ -835,11 +840,11 @@ final class JsonReader private[json] (
 
   /**
    * Reads a JSON string value into a [[java.time.Duration]] instance. In case
-   * of unexpected JSON value throws a [[JsonBinaryCodecError]].
+   * of unexpected JSON value throws a [[JsonCodecError]].
    *
    * @return
    *   a [[java.time.Duration]] instance of the parsed JSON value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON value
    */
   def readDuration(): Duration = {
@@ -849,11 +854,11 @@ final class JsonReader private[json] (
 
   /**
    * Reads a JSON string value into a [[java.time.Instant]] instance. In case of
-   * unexpected JSON value throws a [[JsonBinaryCodecError]].
+   * unexpected JSON value throws a [[JsonCodecError]].
    *
    * @return
    *   a [[java.time.Instant]] instance of the parsed JSON value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON value
    */
   def readInstant(): Instant = {
@@ -863,11 +868,11 @@ final class JsonReader private[json] (
 
   /**
    * Reads a JSON string value into a [[java.time.LocalDate]] instance. In case
-   * of unexpected JSON value throws a [[JsonBinaryCodecError]].
+   * of unexpected JSON value throws a [[JsonCodecError]].
    *
    * @return
    *   a [[java.time.LocalDate]] instance of the parsed JSON value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON value
    */
   def readLocalDate(): LocalDate = {
@@ -877,11 +882,11 @@ final class JsonReader private[json] (
 
   /**
    * Reads a JSON string value into a [[java.time.LocalDateTime]] instance. In
-   * case of unexpected JSON value throws a [[JsonBinaryCodecError]].
+   * case of unexpected JSON value throws a [[JsonCodecError]].
    *
    * @return
    *   a [[java.time.LocalDateTime]] instance of the parsed JSON value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON value
    */
   def readLocalDateTime(): LocalDateTime = {
@@ -891,11 +896,11 @@ final class JsonReader private[json] (
 
   /**
    * Reads a JSON string value into a [[java.time.LocalTime]] instance. In case
-   * of unexpected JSON value throws a [[JsonBinaryCodecError]].
+   * of unexpected JSON value throws a [[JsonCodecError]].
    *
    * @return
    *   a [[java.time.LocalTime]] instance of the parsed JSON value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON value
    */
   def readLocalTime(): LocalTime = {
@@ -905,11 +910,11 @@ final class JsonReader private[json] (
 
   /**
    * Reads a JSON string value into a [[java.time.MonthDay]] instance. In case
-   * of unexpected JSON value throws a [[JsonBinaryCodecError]].
+   * of unexpected JSON value throws a [[JsonCodecError]].
    *
    * @return
    *   a [[java.time.MonthDay]] instance of the parsed JSON value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON value
    */
   def readMonthDay(): MonthDay = {
@@ -919,11 +924,11 @@ final class JsonReader private[json] (
 
   /**
    * Reads a JSON string value into a [[java.time.OffsetDateTime]] instance. In
-   * case of unexpected JSON value throws a [[JsonBinaryCodecError]].
+   * case of unexpected JSON value throws a [[JsonCodecError]].
    *
    * @return
    *   a [[java.time.OffsetDateTime]] instance of the parsed JSON value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON value
    */
   def readOffsetDateTime(): OffsetDateTime = {
@@ -933,11 +938,11 @@ final class JsonReader private[json] (
 
   /**
    * Reads a JSON string value into a [[java.time.OffsetTime]] instance. In case
-   * of unexpected JSON value throws a [[JsonBinaryCodecError]].
+   * of unexpected JSON value throws a [[JsonCodecError]].
    *
    * @return
    *   a [[java.time.OffsetTime]] instance of the parsed JSON value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON value
    */
   def readOffsetTime(): OffsetTime = {
@@ -947,11 +952,11 @@ final class JsonReader private[json] (
 
   /**
    * Reads a JSON string value into a [[java.time.Period]] instance. In case of
-   * unexpected JSON value throws a [[JsonBinaryCodecError]].
+   * unexpected JSON value throws a [[JsonCodecError]].
    *
    * @return
    *   a [[java.time.Period]] instance of the parsed JSON value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON value
    */
   def readPeriod(): Period = {
@@ -961,11 +966,11 @@ final class JsonReader private[json] (
 
   /**
    * Reads a JSON string value into a [[java.time.Year]] instance. In case of
-   * unexpected JSON value throws a [[JsonBinaryCodecError]].
+   * unexpected JSON value throws a [[JsonCodecError]].
    *
    * @return
    *   a [[java.time.Year]] instance of the parsed JSON value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON value
    */
   def readYear(): Year = {
@@ -1024,11 +1029,11 @@ final class JsonReader private[json] (
 
   /**
    * Reads a JSON string value into a [[java.time.YearMonth]] instance. In case
-   * of unexpected JSON value throws a [[JsonBinaryCodecError]].
+   * of unexpected JSON value throws a [[JsonCodecError]].
    *
    * @return
    *   a [[java.time.YearMonth]] instance of the parsed JSON value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON value
    */
   def readYearMonth(): YearMonth = {
@@ -1038,11 +1043,11 @@ final class JsonReader private[json] (
 
   /**
    * Reads a JSON string value into a [[java.time.ZonedDateTime]] instance. In
-   * case of unexpected JSON value throws a [[JsonBinaryCodecError]].
+   * case of unexpected JSON value throws a [[JsonCodecError]].
    *
    * @return
    *   a [[java.time.ZonedDateTime]] instance of the parsed JSON value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON value
    */
   def readZonedDateTime(): ZonedDateTime = {
@@ -1052,11 +1057,11 @@ final class JsonReader private[json] (
 
   /**
    * Reads a JSON string value into a [[java.time.ZoneId]] instance. In case of
-   * unexpected JSON value throws a [[JsonBinaryCodecError]].
+   * unexpected JSON value throws a [[JsonCodecError]].
    *
    * @return
    *   a [[java.time.ZoneId]] instance of the parsed JSON value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON value
    */
   def readZoneId(): ZoneId = {
@@ -1066,11 +1071,11 @@ final class JsonReader private[json] (
 
   /**
    * Reads a JSON string value into a [[java.time.ZoneOffset]] instance. In case
-   * of unexpected JSON value throws a [[JsonBinaryCodecError]].
+   * of unexpected JSON value throws a [[JsonCodecError]].
    *
    * @return
    *   a [[java.time.ZoneOffset]] instance of the parsed JSON value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON value
    */
   def readZoneOffset(): ZoneOffset = {
@@ -1080,11 +1085,11 @@ final class JsonReader private[json] (
 
   /**
    * Reads a JSON string value into a [[java.util.UUID]] instance. In case of
-   * unexpected JSON value throws a [[JsonBinaryCodecError]].
+   * unexpected JSON value throws a [[JsonCodecError]].
    *
    * @return
    *   a [[java.util.UUID]] instance of the parsed JSON value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON value
    */
   def readUUID(): UUID = {
@@ -1097,7 +1102,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a `Boolean` value of the parsed JSON value.
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or unexpected JSON value
    */
   def readBoolean(): Boolean = parseBoolean(isToken = true, head)
@@ -1108,7 +1113,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a length of the string in the internal char buffer
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or invalid encoding of JSON value
    */
   def readStringAsCharBuf(): Int = {
@@ -1122,7 +1127,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a `Byte` value of the parsed JSON value.
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON value or
    *   exceeding the capacity of `Byte`
    */
@@ -1138,7 +1143,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a `Short` value of the parsed JSON value.
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON value or
    *   exceeding the capacity of `Short`
    */
@@ -1154,7 +1159,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   an `Int` value of the parsed JSON value.
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON value or
    *   exceeding the capacity of `Int`
    */
@@ -1170,7 +1175,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a `Long` value of the parsed JSON value.
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON value or
    *   exceeding the capacity of `Long`
    */
@@ -1186,7 +1191,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a `Double` value of the parsed JSON value.
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON value
    */
   def readStringAsDouble(): Double = {
@@ -1201,7 +1206,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a `Float` value of the parsed JSON value.
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON value
    */
   def readStringAsFloat(): Float = {
@@ -1214,26 +1219,28 @@ final class JsonReader private[json] (
   /**
    * Reads a JSON string value into a `BigInt` instance with the default limit
    * of allowed digits. In case of unexpected JSON value throws a
-   * [[JsonBinaryCodecError]].
+   * [[JsonCodecError]].
    *
    * @return
    *   a `BigInt` instance of the parsed JSON value
-   * @throws JsonBinaryCodecError
-   *   in cases of reaching the end of input or illegal format of JSON value
+   * @throws JsonCodecError
+   *   in cases of reaching the end of input or illegal format of JSON value or
+   *   exceeding of the default limit of allowed digits
    */
   def readStringAsBigInt(): BigInt = readStringAsBigInt(bigIntDigitsLimit)
 
   /**
    * Reads a JSON string value into a `BigInt` instance with the provided limit
    * of allowed digits. In case of unexpected JSON value throws a
-   * [[JsonBinaryCodecError]].
+   * [[JsonCodecError]].
    *
    * @param digitsLimit
    *   the maximum number of decimal digits allowed in the parsed `BigInt` value
    * @return
    *   a `BigInt` instance of the parsed JSON value
-   * @throws JsonBinaryCodecError
-   *   in cases of reaching the end of input or illegal format of JSON value
+   * @throws JsonCodecError
+   *   in cases of reaching the end of input or illegal format of JSON value or
+   *   exceeding of the default limit of allowed digits
    */
   def readStringAsBigInt(digitsLimit: Int): BigInt = {
     nextTokenOrError('"', head)
@@ -1246,12 +1253,13 @@ final class JsonReader private[json] (
    * Reads a JSON number value into a `BigDecimal` instance with the default
    * limit of allowed digits for mantissa, the default limit for scale, and the
    * default instance of [[java.math.MathContext]] for precision. In case of
-   * unexpected JSON value throws a [[JsonBinaryCodecError]].
+   * unexpected JSON value throws a [[JsonCodecError]].
    *
    * @return
    *   a `BigDecimal` instance of the parsed JSON value
-   * @throws JsonBinaryCodecError
-   *   in cases of reaching the end of input or illegal format of JSON value
+   * @throws JsonCodecError
+   *   in cases of reaching the end of input or illegal format of JSON value or
+   *   exceeding of default limits
    */
   def readStringAsBigDecimal(): BigDecimal =
     readStringAsBigDecimal(bigDecimalMathContext, bigDecimalScaleLimit, bigDecimalDigitsLimit)
@@ -1260,7 +1268,7 @@ final class JsonReader private[json] (
    * Reads a JSON number value into a `BigDecimal` instance with the provided
    * limit of allowed digits for mantissa, the provided limit for scale, and the
    * provided instance of [[java.math.MathContext]] for precision. In case of
-   * unexpected JSON value throws a [[JsonBinaryCodecError]].
+   * unexpected JSON value throws a [[JsonCodecError]].
    *
    * @param mc
    *   the precision to use
@@ -1270,8 +1278,9 @@ final class JsonReader private[json] (
    *   the maximum number of decimal digits allowed
    * @return
    *   a `BigDecimal` instance of the parsed JSON value
-   * @throws JsonBinaryCodecError
-   *   in cases of reaching the end of input or illegal format of JSON value
+   * @throws JsonCodecError
+   *   in cases of reaching the end of input or illegal format of JSON value or
+   *   exceeding of provided limits
    */
   def readStringAsBigDecimal(mc: MathContext, scaleLimit: Int, digitsLimit: Int): BigDecimal = {
     nextTokenOrError('"', head)
@@ -1285,7 +1294,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   a `Boolean` value of the parsed JSON value.
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON value
    */
   def readStringAsBoolean(): Boolean = {
@@ -1300,7 +1309,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   an `Array[Byte]` instance containing the raw bytes of the JSON value.
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or invalid type of JSON value
    */
   def readRawValAsBytes(): Array[Byte] = try {
@@ -1318,7 +1327,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   an [[java.time.Duration]] instance of the raw JSON value.
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or invalid type of JSON value
    */
   private[json] def readRawValAsDuration(): Duration = parseDuration(true)
@@ -1328,7 +1337,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   an [[java.time.Instant]] instance of the raw JSON value.
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or invalid type of JSON value
    */
   private[json] def readRawValAsInstant(): Instant = parseInstant(true)
@@ -1338,7 +1347,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   an [[java.time.LocalDate]] instance of the raw JSON value.
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or invalid type of JSON value
    */
   private[json] def readRawValAsLocalDate(): LocalDate = parseLocalDate(true)
@@ -1348,7 +1357,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   an [[java.time.LocalDateTime]] instance of the raw JSON value.
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or invalid type of JSON value
    */
   private[json] def readRawValAsLocalDateTime(): LocalDateTime = parseLocalDateTime(true)
@@ -1358,7 +1367,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   an [[java.time.LocalTime]] instance of the raw JSON value.
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or invalid type of JSON value
    */
   private[json] def readRawValAsLocalTime(): LocalTime = parseLocalTime(true)
@@ -1368,7 +1377,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   an [[java.time.MonthDay]] instance of the raw JSON value.
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or invalid type of JSON value
    */
   private[json] def readRawValAsMonthDay(): MonthDay = parseMonthDay(head, true)
@@ -1378,7 +1387,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   an [[java.time.OffsetDateTime]] instance of the raw JSON value.
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or invalid type of JSON value
    */
   private[json] def readRawValAsOffsetDateTime(): OffsetDateTime = parseOffsetDateTime(true)
@@ -1388,7 +1397,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   an [[java.time.OffsetTime]] instance of the raw JSON value.
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or invalid type of JSON value
    */
   private[json] def readRawValAsOffsetTime(): OffsetTime = parseOffsetTime(true)
@@ -1398,7 +1407,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   an [[java.time.Period]] instance of the raw JSON value.
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or invalid type of JSON value
    */
   private[json] def readRawValAsPeriod(): Period = parsePeriod(true)
@@ -1408,14 +1417,14 @@ final class JsonReader private[json] (
    *
    * @return
    *   an [[java.time.ZonedDateTime]] instance of the raw JSON value.
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or invalid type of JSON value
    */
   private[json] def readRawValAsZonedDateTime(): ZonedDateTime = parseZonedDateTime(true)
 
   /**
    * Reads `null` JSON value and returns the provided default value or throws
-   * [[JsonBinaryCodecError]].
+   * [[JsonCodecError]].
    *
    * @param default
    *   the default value to return
@@ -1425,7 +1434,7 @@ final class JsonReader private[json] (
    *   the type of the default value
    * @return
    *   the default value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON value or
    *   when the provided default value is `null`
    */
@@ -1446,7 +1455,7 @@ final class JsonReader private[json] (
 
   /**
    * Reads `null` JSON value and returns the provided default value or throws
-   * [[JsonBinaryCodecError]] with a message of expecting `null` or the provided
+   * [[JsonCodecError]] with a message of expecting `null` or the provided
    * token.
    *
    * @param default
@@ -1457,7 +1466,7 @@ final class JsonReader private[json] (
    *   the type of the default value
    * @return
    *   the default value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or illegal format of JSON value or
    *   when the provided default value is `null`
    */
@@ -1481,7 +1490,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   the next byte from the input
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input
    */
   def nextByte(): Byte = nextByte(head)
@@ -1491,7 +1500,7 @@ final class JsonReader private[json] (
    *
    * @return
    *   the next token from the input
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input
    */
   def nextToken(): Byte = nextToken(head)
@@ -1504,7 +1513,7 @@ final class JsonReader private[json] (
    *   the token to match
    * @return
    *   `true` if the next token matches `t`, `false` otherwise
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input
    */
   def isNextToken(t: Byte): Boolean = isNextToken(t, head)
@@ -1515,7 +1524,7 @@ final class JsonReader private[json] (
    *
    * @param t
    *   the token to match
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input or unexpected token is detected
    */
   def nextTokenOrError(t: Byte): Unit = nextTokenOrError(t, head)
@@ -1530,7 +1539,11 @@ final class JsonReader private[json] (
    * @throws java.lang.IllegalStateException
    *   if no any token was parsed yet
    */
-  def isCurrentToken(t: Byte): Boolean = isCurrentToken(t, head)
+  def isCurrentToken(t: Byte): Boolean = {
+    val pos = head
+    if (pos == 0) illegalTokenOperation()
+    buf(pos - 1) == t
+  }
 
   /**
    * Checks if there are more bytes available for reading in the input.
@@ -1583,10 +1596,10 @@ final class JsonReader private[json] (
   def isCharBufEqualsTo(len: Int, s: String): Boolean = {
     if (s.length != len) return false
     val charBuf = this.charBuf
-    var i       = 0
-    while (i < len) {
-      if (s.charAt(i) != charBuf(i)) return false
-      i += 1
+    var idx     = 0
+    while (idx < len) {
+      if (s.charAt(idx) != charBuf(idx)) return false
+      idx += 1
     }
     true
   }
@@ -1594,13 +1607,14 @@ final class JsonReader private[json] (
   /**
    * Skips the next JSON value.
    *
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input
    */
+  @noinline
   def skip(): Unit = {
     val b   = nextToken(head)
     var pos = head
-    if (b == '"') pos = skipString(evenBackSlashes = true, pos)
+    if (b == '"') pos = skipString(pos)
     else if ((b >= '0' && b <= '9') || b == '-') pos = skipNumber(pos)
     else if (b == 'n' || b == 't') pos = skipFixedBytes(3, pos)
     else if (b == 'f') pos = skipFixedBytes(4, pos)
@@ -1622,102 +1636,25 @@ final class JsonReader private[json] (
   def registers: Registers = this.stack
 
   /**
-   * Throws a [[JsonBinaryCodecError]] with the message `expected ','`.
+   * Throws a [[JsonCodecError]] with the message `expected ']' or ','`.
    *
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   always
    */
-  def commaError(): Nothing = decodeError("expected ','")
-
-  /**
-   * Throws a [[JsonBinaryCodecError]] with the message `expected ']'`.
-   *
-   * @throws JsonBinaryCodecError
-   *   always
-   */
-  def arrayEndError(): Nothing = decodeError("expected ']'")
-
-  /**
-   * Throws a [[JsonBinaryCodecError]] with the message `expected ']' or ','`.
-   *
-   * @throws JsonBinaryCodecError
-   *   always
-   */
+  @noinline
   def arrayEndOrCommaError(): Nothing = decodeError("expected ']' or ','")
 
   /**
-   * Throws a [[JsonBinaryCodecError]] with the message `expected '}' or ','`.
+   * Throws a [[JsonCodecError]] with the message `expected '}' or ','`.
    *
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   always
    */
+  @noinline
   def objectEndOrCommaError(): Nothing = decodeError("expected '}' or ','")
 
-  /**
-   * Throws a [[JsonBinaryCodecError]] with the given message.
-   *
-   * @param msg
-   *   the exception message
-   * @throws JsonBinaryCodecError
-   *   always
-   */
-  def decodeError(msg: String): Nothing = decodeError(appendString(msg, 0))
-
-  /**
-   * Throws a [[JsonBinaryCodecError]] wrapping the given error and adding a
-   * span.
-   *
-   * @param span
-   *   the span to add to the error
-   * @param error
-   *   the error to wrap
-   * @throws JsonBinaryCodecError
-   *   always
-   */
-  def decodeError(span: DynamicOptic.Node, error: Throwable): Nothing = error match {
-    case e: JsonBinaryCodecError =>
-      e.spans = new ::(span, e.spans)
-      throw e
-    case _ => throw new JsonBinaryCodecError(new ::(span, Nil), error.getMessage)
-  }
-
-  /**
-   * Throws a [[JsonBinaryCodecError]] wrapping the given error and adding two
-   * spans.
-   *
-   * @param span1
-   *   the first span to add to the error
-   * @param span2
-   *   the second span to add to the error
-   * @param error
-   *   the error to wrap
-   * @throws JsonBinaryCodecError
-   *   always
-   */
-  def decodeError(span1: DynamicOptic.Node, span2: DynamicOptic.Node, error: Throwable): Nothing = error match {
-    case e: JsonBinaryCodecError =>
-      e.spans = new ::(span1, new ::(span2, e.spans))
-      throw e
-    case _ => throw new JsonBinaryCodecError(new ::(span1, new ::(span2, Nil)), error.getMessage)
-  }
-
-  /**
-   * Throws a [[JsonBinaryCodecError]] wrapping the given error and adding a
-   * list of spans.
-   *
-   * @param spans
-   *   the list of spans to add to the error
-   * @param error
-   *   the error to wrap
-   * @throws JsonBinaryCodecError
-   *   always
-   */
-  def decodeError(spans: List[DynamicOptic.Node], error: Throwable): Nothing = error match {
-    case e: JsonBinaryCodecError =>
-      e.spans = spans.foldLeft(e.spans)((ss, s) => s :: ss)
-      throw e
-    case _ => throw new JsonBinaryCodecError(spans, error.getMessage)
-  }
+  @noinline
+  private[this] def decodeError(msg: String): Nothing = throw new JsonCodecError(Nil, msg)
 
   /**
    * Indicates whether the reader is currently in use.
@@ -1729,7 +1666,7 @@ final class JsonReader private[json] (
 
   /**
    * Reads a JSON value from the given byte array slice into an instance of type
-   * `A` using the given [[JsonBinaryCodec]].
+   * `A` using the given [[JsonCodec]].
    *
    * @param codec
    *   the JSON value codec
@@ -1745,13 +1682,13 @@ final class JsonReader private[json] (
    *   the type of the value to read
    * @return
    *   an instance of type `A` containing the decoded JSON value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input during parsing of JSON value or
    *   unexpected format of JSON value or when configured checking of reaching
    *   the end of input doesn't pass after reading of the whole JSON value
    */
   private[json] def read[A](
-    codec: JsonBinaryCodec[A],
+    codec: JsonCodec[A],
     buf: Array[Byte],
     from: Int,
     to: Int,
@@ -1780,7 +1717,7 @@ final class JsonReader private[json] (
 
   /**
    * Reads a JSON value from the given input stream into an instance of type `A`
-   * using the given [[JsonBinaryCodec]].
+   * using the given [[JsonCodec]].
    *
    * @param codec
    *   the JSON value codec
@@ -1792,12 +1729,12 @@ final class JsonReader private[json] (
    *   the type of the value to read
    * @return
    *   an instance of type `A` containing the decoded JSON value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input during parsing of JSON value or
    *   unexpected format of JSON value or when configured checking of reaching
    *   the end of input doesn't pass after reading of the whole JSON value
    */
-  private[json] def read[A](codec: JsonBinaryCodec[A], in: InputStream, config: ReaderConfig): A =
+  private[json] def read[A](codec: JsonCodec[A], in: InputStream, config: ReaderConfig): A =
     try {
       top = 0
       maxTop = 0
@@ -1821,7 +1758,7 @@ final class JsonReader private[json] (
 
   /**
    * Reads a JSON value from the given byte buffer into an instance of type `A`
-   * using the given [[JsonBinaryCodec]].
+   * using the given [[JsonCodec]].
    *
    * @param codec
    *   the JSON value codec
@@ -1833,12 +1770,12 @@ final class JsonReader private[json] (
    *   the type of the value to read
    * @return
    *   an instance of type `A` containing the decoded JSON value
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   in cases of reaching the end of input during parsing of JSON value or
    *   unexpected format of JSON value or when configured checking of reaching
    *   the end of input doesn't pass after reading of the whole JSON value
    */
-  private[json] def read[A](codec: JsonBinaryCodec[A], bbuf: ByteBuffer, config: ReaderConfig): A = {
+  private[json] def read[A](codec: JsonCodec[A], bbuf: ByteBuffer, config: ReaderConfig): A = {
     top = 0
     maxTop = 0
     markNum = 0
@@ -1888,7 +1825,7 @@ final class JsonReader private[json] (
    * Skips whitespace characters and checks if there are non-whitespace
    * characters left in the input.
    *
-   * @throws JsonBinaryCodecError
+   * @throws JsonCodecError
    *   when there is at least one non-whitespace character left in the input
    */
   private[json] def endOfInputOrError(): Unit = if (skipWhitespaces()) decodeError("expected end of input")
@@ -1917,48 +1854,54 @@ final class JsonReader private[json] (
     pos != tail
   }
 
+  @noinline
   private[this] def tokenOrDigitError(t: Byte): Nothing = {
-    var i = appendString("expected '", 0)
-    i = appendChar(t.toChar, i)
-    i = appendString("' or digit", i)
-    decodeError(i)
+    var idx = appendString("expected '", 0)
+    idx = appendChar(t.toChar, idx)
+    idx = appendString("' or digit", idx)
+    decodeError(idx)
   }
 
+  @noinline
   private[this] def tokensError(t1: Byte, t2: Byte): Nothing = {
-    var i = appendString("expected '", 0)
-    i = appendChar(t1.toChar, i)
-    i = appendString("' or '", i)
-    i = appendChar(t2.toChar, i)
-    i = appendChar('\'', i)
-    decodeError(i)
+    var idx = appendString("expected '", 0)
+    idx = appendChar(t1.toChar, idx)
+    idx = appendString("' or '", idx)
+    idx = appendChar(t2.toChar, idx)
+    idx = appendChar('\'', idx)
+    decodeError(idx)
   }
 
+  @noinline
   private[this] def tokenOrNullError(t: Byte): Nothing = {
-    var i = appendString("expected '", 0)
-    i = appendChar(t.toChar, i)
-    i = appendString("' or null", i)
-    decodeError(i)
+    var idx = appendString("expected '", 0)
+    idx = appendChar(t.toChar, idx)
+    idx = appendString("' or null", idx)
+    decodeError(idx)
   }
 
+  @noinline
   private[this] def tokenError(t: Byte): Nothing = {
-    var i = appendString("expected '", 0)
-    i = appendChar(t.toChar, i)
-    i = appendChar('\'', i)
-    decodeError(i)
+    var idx = appendString("expected '", 0)
+    idx = appendChar(t.toChar, idx)
+    idx = appendChar('\'', idx)
+    decodeError(idx)
   }
 
-  private[this] def decodeError(from: Int): Nothing =
-    throw new JsonBinaryCodecError(Nil, new String(charBuf, 0, from))
+  @noinline
+  private[this] def decodeError(from: Int): Nothing = throw new JsonCodecError(Nil, new String(charBuf, 0, from))
 
+  @inline
   private[this] def setMark(pos: Int): Unit = {
-    val i = markNum
-    if (i == marks.length) growMarks()
-    marks(i) = pos
-    markNum = i + 1
+    val idx = markNum
+    if (idx == marks.length) growMarks()
+    marks(idx) = pos
+    markNum = idx + 1
   }
 
   private[this] def growMarks(): Unit = marks = java.util.Arrays.copyOf(marks, (marks.length | 1) << 1)
 
+  @inline
   @tailrec
   private[this] def nextByte(pos: Int): Byte =
     if (pos < tail) {
@@ -1966,6 +1909,7 @@ final class JsonReader private[json] (
       buf(pos)
     } else nextByte(loadMoreOrError(pos))
 
+  @inline
   @tailrec
   private[this] def nextByteOrError(t: Byte, pos: Int): Unit =
     if (pos < tail) {
@@ -2000,14 +1944,11 @@ final class JsonReader private[json] (
       b == t || ((b == ' ' || b == '\n' || (b | 0x4) == '\r') && nextToken(pos + 1) == t)
     } else isNextToken(t, loadMoreOrError(pos))
 
-  private[this] def isCurrentToken(t: Byte, pos: Int): Boolean = {
-    if (pos == 0) illegalTokenOperation()
-    buf(pos - 1) == t
-  }
-
+  @noinline
   private[this] def illegalTokenOperation(): Nothing =
     throw new IllegalStateException("expected preceding call of 'nextToken()' or 'isNextToken()'")
 
+  @noinline
   private[this] def missingSetMarkOperation(): Nothing =
     throw new IllegalStateException("expected preceding call of 'setMark()'")
 
@@ -2035,6 +1976,7 @@ final class JsonReader private[json] (
       } else parseNon4DigitYearWithByte(t, 9, year, pos)
     } else parseYearWithByte(t, loadMoreOrError(pos))
 
+  @noinline
   private[this] def parseNon4DigitYearWithByte(t: Byte, maxDigits: Int, y: Int, p: Int): Int = {
     val b1 = (y + 0x30).toByte
     if (b1 != '-' && b1 != '+') fourDigitYearWithByteError(t, p, y)
@@ -2225,23 +2167,52 @@ final class JsonReader private[json] (
     var buf = this.buf
     setMark(pos)
     try {
-      var hash    = 0
-      var b: Byte = 0
-      while ({
-        if (pos >= tail) {
-          pos = loadMoreOrError(pos)
-          buf = this.buf
+      var hash, bs = 0L
+      while (
+        (pos + 7 < tail || {
+          bs = 0L
+          var b = 0: Byte
+          while ({
+            if (pos >= tail) {
+              pos = loadMoreOrError(pos)
+              buf = this.buf
+            }
+            b = buf(pos)
+            pos += 1
+            b != '"'
+          }) {
+            bs >>>= 8
+            bs |= b.toLong << 56
+            if (bs.toByte != 0) {
+              hash = (hash << 5) - hash + bs
+              bs = 0
+            }
+          }
+          if (bs != 0) hash = (hash << 5) - hash + bs
+          false
+        }) && {
+          bs = ByteArrayAccess.getLong(buf, pos)
+          val m = ((bs ^ 0x2222222222222222L) - 0x0101010101010101L) & ~bs & 0x8080808080808080L
+          m == 0 || {
+            val offset = java.lang.Long.numberOfTrailingZeros(m) >> 3
+            pos += offset + 1
+            if (offset > 0) {
+              bs <<= -offset << 3
+              hash = (hash << 5) - hash + bs
+            }
+            false
+          }
         }
-        b = buf(pos)
-        pos += 1
-        b != '"'
-      }) hash = (hash << 5) - hash + b
+      ) {
+        hash = (hash << 5) - hash + bs
+        pos += 8
+      }
       var k = zoneIdKey
       if (k eq null) {
         k = new Key
         zoneIdKey = k
       }
-      k.set(hash, buf, marks(markNum - 1), pos - 1)
+      k.set(((hash >> 32) ^ hash).toInt, buf, marks(markNum - 1), pos - 1)
       var zoneId = zoneIds.get(k)
       if (zoneId eq null) zoneId = toZoneId(k)
       head = pos
@@ -2297,6 +2268,7 @@ final class JsonReader private[json] (
       else booleanError()
     } else parseBoolean(isToken, loadMoreOrError(pos))
 
+  @noinline
   private[this] def booleanError(): Nothing = decodeError("illegal boolean")
 
   private[this] def readByte(isToken: Boolean): Byte = {
@@ -2390,23 +2362,55 @@ final class JsonReader private[json] (
     else {
       var pos = head
       var buf = this.buf
+      var dec = 0
       while (
-        (pos < tail || {
+        (x > -214748 && (pos + 3 < tail || {
           pos = loadMore(pos)
           buf = this.buf
-          pos < tail
+          pos + 3 < tail
+        }) || {
+          while (
+            (pos < tail || {
+              pos = loadMore(pos)
+              buf = this.buf
+              pos < tail
+            }) && {
+              b = buf(pos)
+              b >= '0' && b <= '9'
+            }
+          ) {
+            if (
+              x < -214748364 || {
+                x = x * 10 + ('0' - b)
+                x > 0
+              }
+            ) intOverflowError()
+            pos += 1
+          }
+          false
         }) && {
-          b = buf(pos)
-          b >= '0' && b <= '9'
+          // Based on the fast parsing of numbers by 8-byte words: https://github.com/wrandelshofer/FastDoubleParser/blob/0903817a765b25e654f02a5a9d4f1476c98a80c9/src/main/java/ch.randelshofer.fastdoubleparser/ch/randelshofer/fastdoubleparser/FastDoubleSimd.java#L114-L130
+          dec = ByteArrayAccess.getInt(buf, pos) - 0x30303030
+          ((dec + 0x76767676 | dec) & 0x80808080) == 0 || {
+            var d = 0
+            while ({
+              d = dec & 0xff
+              d <= 9
+            }) {
+              x *= 10
+              x -= d
+              dec >>= 8
+              pos += 1
+            }
+            b = (d + 0x30).toByte
+            false
+          }
         }
       ) {
-        if (
-          x < -214748364 || {
-            x = x * 10 + ('0' - b)
-            x > 0
-          }
-        ) intOverflowError()
-        pos += 1
+        dec = (dec * 2561 >> 8 & 0xff00ff) * 6553601 >> 16
+        x *= 10000
+        x -= dec
+        pos += 4
       }
       head = pos
       x ^= s
@@ -2432,48 +2436,55 @@ final class JsonReader private[json] (
     else {
       var pos = head
       var buf = this.buf
-      var dec = 0L
+      var dec = 0
       while (
-        (pos + 7 < tail || {
+        (x > -922337203685477L && (pos + 3 < tail || {
           pos = loadMore(pos)
           buf = this.buf
-          pos + 7 < tail
+          pos + 3 < tail
+        }) || {
+          while (
+            (pos < tail || {
+              pos = loadMore(pos)
+              buf = this.buf
+              pos < tail
+            }) && {
+              b = buf(pos)
+              b >= '0' && b <= '9'
+            }
+          ) {
+            if (
+              x < -922337203685477580L || {
+                x = x * 10 + ('0' - b)
+                x > 0
+              }
+            ) longOverflowError()
+            pos += 1
+          }
+          false
         }) && {
-          val bs = ByteArrayAccess.getLong(
-            buf,
-            pos
-          ) // Based on the fast parsing of numbers by 8-byte words: https://github.com/wrandelshofer/FastDoubleParser/blob/0903817a765b25e654f02a5a9d4f1476c98a80c9/src/main/java/ch.randelshofer.fastdoubleparser/ch/randelshofer/fastdoubleparser/FastDoubleSimd.java#L114-L130
-          dec = bs - 0x3030303030303030L
-          ((bs + 0x4646464646464646L | dec) & 0x8080808080808080L) == 0
+          // Based on the fast parsing of numbers by 8-byte words: https://github.com/wrandelshofer/FastDoubleParser/blob/0903817a765b25e654f02a5a9d4f1476c98a80c9/src/main/java/ch.randelshofer.fastdoubleparser/ch/randelshofer/fastdoubleparser/FastDoubleSimd.java#L114-L130
+          dec = ByteArrayAccess.getInt(buf, pos) - 0x30303030
+          ((dec + 0x76767676 | dec) & 0x80808080) == 0 || {
+            var d = 0
+            while ({
+              d = dec & 0xff
+              d <= 9
+            }) {
+              x *= 10
+              x -= d
+              dec >>= 8
+              pos += 1
+            }
+            b = (d + 0x30).toByte
+            false
+          }
         }
       ) {
-        if (
-          x < -92233720368L || {
-            dec *= 2561
-            x *= 100000000
-            x -= ((dec >> 8 & 0xff000000ffL) * 4294967296000100L + (dec >> 24 & 0xff000000ffL) * 42949672960001L >> 32)
-            x > 0
-          }
-        ) longOverflowError()
-        pos += 8
-      }
-      while (
-        (pos < tail || {
-          pos = loadMore(pos)
-          buf = this.buf
-          pos < tail
-        }) && {
-          b = buf(pos)
-          b >= '0' && b <= '9'
-        }
-      ) {
-        if (
-          x < -922337203685477580L || {
-            x = x * 10 + ('0' - b)
-            x > 0
-          }
-        ) longOverflowError()
-        pos += 1
+        dec = (dec * 2561 >> 8 & 0xff00ff) * 6553601 >> 16
+        x *= 10000
+        x -= dec
+        pos += 4
       }
       head = pos
       x ^= s
@@ -2484,6 +2495,7 @@ final class JsonReader private[json] (
     x
   }
 
+  @noinline
   private[this] def ensureNotLeadingZero(): Unit = {
     var pos = head
     if (
@@ -2547,22 +2559,58 @@ final class JsonReader private[json] (
         pos += 1
         e10 += digits
         var noFracDigits = true
+        var dec          = 0
         while (
-          (pos < tail || {
+          (m10 < 922337203685477L && (pos + 3 < tail || {
             pos = loadMore(pos)
             buf = this.buf
-            pos < tail
+            pos + 3 < tail
+          }) || {
+            while (
+              (pos < tail || {
+                pos = loadMore(pos)
+                buf = this.buf
+                pos < tail
+              }) && {
+                b = buf(pos)
+                b >= '0' && b <= '9'
+              }
+            ) {
+              if (m10 < 922337203685477580L) {
+                m10 = m10 * 10 + (b - '0')
+                digits += 1
+              }
+              noFracDigits = false
+              pos += 1
+            }
+            false
           }) && {
-            b = buf(pos)
-            b >= '0' && b <= '9'
+            // Based on the fast parsing of numbers by 8-byte words: https://github.com/wrandelshofer/FastDoubleParser/blob/0903817a765b25e654f02a5a9d4f1476c98a80c9/src/main/java/ch.randelshofer.fastdoubleparser/ch/randelshofer/fastdoubleparser/FastDoubleSimd.java#L114-L130
+            dec = ByteArrayAccess.getInt(buf, pos) - 0x30303030
+            ((dec + 0x76767676 | dec) & 0x80808080) == 0 || {
+              var d = 0
+              while ({
+                d = dec & 0xff
+                d <= 9
+              }) {
+                m10 *= 10
+                m10 += d
+                noFracDigits = false
+                digits += 1
+                dec >>= 8
+                pos += 1
+              }
+              b = (d + 0x30).toByte
+              false
+            }
           }
         ) {
-          if (m10 < 922337203685477580L) {
-            m10 = m10 * 10 + (b - '0')
-            digits += 1
-          }
+          dec = (dec * 2561 >> 8 & 0xff00ff) * 6553601 >> 16
+          m10 *= 10000
+          m10 += dec
           noFracDigits = false
-          pos += 1
+          digits += 4
+          pos += 4
         }
         e10 -= digits
         if (noFracDigits) numberError()
@@ -2614,6 +2662,7 @@ final class JsonReader private[json] (
 
   // Based on the 'Moderate Path' algorithm from the awesome library of Alexander Huszagh: https://github.com/Alexhuszagh/rust-lexical
   // Here is his inspiring post: https://www.reddit.com/r/rust/comments/a6j5j1/making_rust_float_parsing_fast_and_correct
+  @inline
   private[this] def toDouble(m10: Long, e10: Int, pos: Int): Double =
     if (m10 == 0 || e10 < -343) 0.0
     else if (e10 >= 310) Double.PositiveInfinity
@@ -2651,6 +2700,7 @@ final class JsonReader private[json] (
       else toDouble(pos)
     }
 
+  @noinline
   private[this] def toDouble(pos: Int): Double = {
     val from = marks(markNum - 1)
     java.lang.Double.parseDouble(new String(buf, 0, from, pos - from)): @nowarn
@@ -2769,6 +2819,7 @@ final class JsonReader private[json] (
 
   // Based on the 'Moderate Path' algorithm from the awesome library of Alexander Huszagh: https://github.com/Alexhuszagh/rust-lexical
   // Here is his inspiring post: https://www.reddit.com/r/rust/comments/a6j5j1/making_rust_float_parsing_fast_and_correct
+  @inline
   private[this] def toFloat(m10: Long, e10: Int, pos: Int): Float =
     if (m10 == 0 || e10 < -64) 0.0f
     else if (e10 >= 39) Float.PositiveInfinity
@@ -2806,11 +2857,13 @@ final class JsonReader private[json] (
       else toFloat(pos)
     }
 
+  @noinline
   private[this] def toFloat(pos: Int): Float = {
     val from = marks(markNum - 1)
     java.lang.Float.parseFloat(new String(buf, 0, from, pos - from)): @nowarn
   }
 
+  @inline
   private[this] def unsignedMultiplyHigh(x: Long, y: Long): Long =
     Math.multiplyHigh(x, y) + x + y // Use implementation that works only when both params are negative
 
@@ -2871,6 +2924,11 @@ final class JsonReader private[json] (
         if (len < 19) {
           var x = (buf(from) - '0').toLong
           from += 1
+          while (from + 3 < pos) {
+            x *= 10000
+            x += ((ByteArrayAccess.getInt(buf, from) - 0x30303030) * 2561 >> 8 & 0xff00ff) * 6553601 >> 16
+            from += 4
+          }
           while (from < pos) {
             x = x * 10 + (buf(from) - '0')
             from += 1
@@ -3051,6 +3109,11 @@ final class JsonReader private[json] (
               from += 1
             }
             from += 1
+            while (from + 3 < limit) {
+              x *= 10000
+              x += ((ByteArrayAccess.getInt(buf, from) - 0x30303030) * 2561 >> 8 & 0xff00ff) * 6553601 >> 16
+              from += 4
+            }
             while (from < limit) {
               x = x * 10 + (buf(from) - '0')
               from += 1
@@ -3071,6 +3134,11 @@ final class JsonReader private[json] (
       var pos = p
       var x   = (buf(pos) - '0').toLong
       pos += 1
+      while (pos + 3 < limit) {
+        x *= 10000
+        x += ((ByteArrayAccess.getInt(buf, pos) - 0x30303030) * 2561 >> 8 & 0xff00ff) * 6553601 >> 16
+        pos += 4
+      }
       while (pos < limit) {
         x = x * 10 + (buf(pos) - '0')
         pos += 1
@@ -3093,6 +3161,11 @@ final class JsonReader private[json] (
     var pos             = p
     var x1              = (buf(pos) - '0').toLong
     pos += 1
+    while (pos + 3 < firstBlockLimit) {
+      x1 *= 10000
+      x1 += ((ByteArrayAccess.getInt(buf, pos) - 0x30303030) * 2561 >> 8 & 0xff00ff) * 6553601 >> 16
+      pos += 4
+    }
     while (pos < firstBlockLimit) {
       x1 = x1 * 10 + (buf(pos) - '0')
       pos += 1
@@ -3126,6 +3199,11 @@ final class JsonReader private[json] (
     var pos             = p
     var x1              = (buf(pos) - '0').toLong
     pos += 1
+    while (pos + 3 < firstBlockLimit) {
+      x1 *= 10000
+      x1 += ((ByteArrayAccess.getInt(buf, pos) - 0x30303030) * 2561 >> 8 & 0xff00ff) * 6553601 >> 16
+      pos += 4
+    }
     while (pos < firstBlockLimit) {
       x1 = x1 * 10 + (buf(pos) - '0')
       pos += 1
@@ -3162,15 +3240,20 @@ final class JsonReader private[json] (
       magnitude = new Array[Byte](128)
       this.magnitude = magnitude
     } else {
-      var i = 0
-      while (i < last) {
-        ByteArrayAccess.setLong(magnitude, i, 0L)
-        i += 8
+      var idx = 0
+      while (idx < last) {
+        ByteArrayAccess.setLong(magnitude, idx, 0L)
+        idx += 8
       }
     }
     var x               = 0L
     val firstBlockLimit = len % 18 + p
     var pos             = p
+    while (pos + 3 < firstBlockLimit) {
+      x *= 10000
+      x += ((ByteArrayAccess.getInt(buf, pos) - 0x30303030) * 2561 >> 8 & 0xff00ff) * 6553601 >> 16
+      pos += 4
+    }
     while (pos < firstBlockLimit) {
       x = x * 10 + (buf(pos) - '0')
       pos += 1
@@ -3188,16 +3271,16 @@ final class JsonReader private[json] (
         } + buf(pos + 17) - 48000000048L
       pos += 18
       first = Math.max(first - 8, 0)
-      var i     = last
+      var idx   = last
       val q     = 1000000000000000000L
       var m, mq = 0L
       while ({
-        m = ByteArrayAccess.getLong(magnitude, i)
+        m = ByteArrayAccess.getLong(magnitude, idx)
         mq = m * q
         x += mq
-        ByteArrayAccess.setLong(magnitude, i, x)
-        i -= 8
-        i >= first
+        ByteArrayAccess.setLong(magnitude, idx, x)
+        idx -= 8
+        idx >= first
       }) {
         x = Math.multiplyHigh(
           m,
@@ -3205,28 +3288,36 @@ final class JsonReader private[json] (
         ) + (m >> 63 & q) + ((~x & mq) >>> 63) // TODO: when dropping JDK 17 support replace by Math.unsignedMultiplyHigh(m, q) + ((~x & mq) >>> 63)
       }
     }
-    var i = 0
-    while (i <= last) {
-      ByteArrayAccess.setLongReversed(magnitude, i, ByteArrayAccess.getLong(magnitude, i))
-      i += 8
+    var idx = 0
+    while (idx <= last) {
+      ByteArrayAccess.setLongReversed(magnitude, idx, ByteArrayAccess.getLong(magnitude, idx))
+      idx += 8
     }
     new java.math.BigInteger(s | 1, magnitude, 0, last + 8)
   }
 
+  @noinline
   private[this] def numberError(): Nothing = decodeError("illegal number")
 
+  @noinline
   private[this] def digitsLimitError(): Nothing = decodeError("value exceeds limit for number of digits")
 
+  @noinline
   private[this] def scaleLimitError(): Nothing = decodeError("value exceeds limit for scale")
 
+  @noinline
   private[this] def leadingZeroError(): Nothing = decodeError("illegal number with leading zero")
 
+  @noinline
   private[this] def byteOverflowError(): Nothing = decodeError("value is too large for byte")
 
+  @noinline
   private[this] def shortOverflowError(): Nothing = decodeError("value is too large for short")
 
+  @noinline
   private[this] def intOverflowError(): Nothing = decodeError("value is too large for int")
 
+  @noinline
   private[this] def longOverflowError(): Nothing = decodeError("value is too large for long")
 
   private[this] def parseDuration(isRaw: Boolean): Duration = {
@@ -3356,6 +3447,7 @@ final class JsonReader private[json] (
     else Duration.ofSeconds(seconds, nano.toLong)
   }
 
+  @inline
   private[this] def sumSeconds(s1: Long, s2: Long): Long = {
     val s = s1 + s2
     if (((s1 ^ s) & (s2 ^ s)) < 0) durationError()
@@ -3456,8 +3548,9 @@ final class JsonReader private[json] (
     else Instant.ofEpochSecond(epochSecond, nano.toLong)
   }
 
-  private[this] def parseSecondOfDay(pos: Int): Long =
-    (parseHourWithColon(pos) * 3600 + parseMinuteWithColon(head) * 60 + parseSecond(head)).toLong
+  @noinline
+  private[this] def parseSecondOfDay(pos: Int): Int =
+    parseHourWithColon(pos) * 3600 + parseMinuteWithColon(head) * 60 + parseSecond(head)
 
   private[this] def parseLocalDate(isRaw: Boolean): LocalDate = {
     val year       = parseYearWithByte('-', head)
@@ -4065,6 +4158,7 @@ final class JsonReader private[json] (
     Period.of(years, months, days)
   }
 
+  @inline
   private[this] def isValueByte(b: Byte) =
     b != ' ' && b != '\n' && b != '\t' && b != '\r' && b != ',' && b != ']' && b != '}'
 
@@ -4233,22 +4327,51 @@ final class JsonReader private[json] (
       buf = this.buf
       setMark(pos)
       try {
-        var hash = 0
-        while ({
-          if (pos >= tail) {
-            pos = loadMoreOrError(pos)
-            buf = this.buf
+        var hash, bs = 0L
+        while (
+          (pos + 7 < tail || {
+            bs = 0L
+            while ({
+              if (pos >= tail) {
+                pos = loadMoreOrError(pos)
+                buf = this.buf
+              }
+              b = buf(pos)
+              pos += 1
+              b != ']'
+            }) {
+              bs >>>= 8
+              bs |= b.toLong << 56
+              if (bs.toByte != 0) {
+                hash = (hash << 5) - hash + bs
+                bs = 0
+              }
+            }
+            if (bs != 0) hash = (hash << 5) - hash + bs
+            false
+          }) && {
+            bs = ByteArrayAccess.getLong(buf, pos)
+            val m = ((bs ^ 0x5d5d5d5d5d5d5d5dL) - 0x0101010101010101L) & ~bs & 0x8080808080808080L
+            m == 0 || {
+              val offset = java.lang.Long.numberOfTrailingZeros(m) >> 3
+              pos += offset + 1
+              if (offset > 0) {
+                bs <<= -offset << 3
+                hash = (hash << 5) - hash + bs
+              }
+              false
+            }
           }
-          b = buf(pos)
-          pos += 1
-          b != ']'
-        }) hash = (hash << 5) - hash + b
+        ) {
+          hash = (hash << 5) - hash + bs
+          pos += 8
+        }
         var k = zoneIdKey
         if (k eq null) {
           k = new Key
           zoneIdKey = k
         }
-        k.set(hash, buf, marks(markNum - 1), pos - 1)
+        k.set(((hash >> 32) ^ hash).toInt, buf, marks(markNum - 1), pos - 1)
         var zoneId = zoneIds.get(k)
         if (zoneId eq null) zoneId = toZoneId(k)
         if (isRaw) head = pos
@@ -4268,13 +4391,12 @@ final class JsonReader private[json] (
 
   private[this] def toZoneId(k: Key): ZoneId =
     try {
-      val zoneId = ZoneId.of(k.toString)
+      val zoneId           = ZoneId.of(k.toString)
+      val normalizedZoneId = zoneId.normalized
       if (
-        !zoneId.isInstanceOf[ZoneOffset] || // check if totalSeconds is divisible by 900
-        (zoneId.asInstanceOf[ZoneOffset].getTotalSeconds * 37283 & 0x1ff8000) == 0
-      ) {
-        zoneIds.put(k.copy, zoneId)
-      }
+        !normalizedZoneId.isInstanceOf[ZoneOffset] || // check if totalSeconds is divisible by 900
+        (normalizedZoneId.asInstanceOf[ZoneOffset].getTotalSeconds * 37283 & 0x1ff8000) == 0
+      ) zoneIds.put(k.copy, zoneId)
       return zoneId
     } catch {
       case _: DateTimeException => timezoneError()
@@ -4349,6 +4471,7 @@ final class JsonReader private[json] (
     } else ZoneOffset.ofTotalSeconds((offsetTotal ^ s) - s)
   }
 
+  @inline
   private[this] def epochDay(year: Int, month: Int, day: Int): Long =
     year * 365L + ((year + 3 >> 2) - {
       val cp = year * 1374389535L
@@ -4359,18 +4482,22 @@ final class JsonReader private[json] (
        else if (isLeap(year)) -719530
        else -719531) + day) // 719528 == days 0000 to 1970)
 
+  @noinline
   private[this] def maxDayForYearMonth(year: Int, month: Int): Int =
     if (month != 2) month >> 3 ^ (month | 0x1e)
     else if (isLeap(year)) 29
     else 28
 
+  @noinline
   private[this] def maxDayForMonth(month: Int): Int =
     if (month != 2) month >> 3 ^ (month | 0x1e)
     else 29
 
+  @noinline
   private[this] def isLeap(year: Int): Boolean =
     (year & 0x3) == 0 && (year * -1030792151 - 2061584303 > -1975684958 || (year & 0xf) == 0) // year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
 
+  @noinline
   private[this] def fourDigitYearWithByteError(t: Byte, pos: Int, y: Int): Nothing = {
     val m = (y + 0x76767676 | y) & 0x80808080
     if (m == 0) tokenError(t)
@@ -4378,10 +4505,13 @@ final class JsonReader private[json] (
     else digitError()
   }
 
+  @noinline
   private[this] def digitError(): Nothing = decodeError("expected digit")
 
+  @noinline
   private[this] def periodError(): Nothing = decodeError("illegal period")
 
+  @noinline
   private[this] def periodError(state: Int): Nothing = decodeError(
     state match {
       case 0 => "expected 'Y' or 'M' or 'W' or 'D' or digit"
@@ -4391,19 +4521,23 @@ final class JsonReader private[json] (
     }
   )
 
+  @noinline
   private[this] def durationOrPeriodStartError(s: Int): Nothing = decodeError {
     if (s < 0) "expected 'P'"
     else "expected 'P' or '-'"
   }
 
+  @noinline
   private[this] def durationOrPeriodDigitError(s: Int, sx: Int, state: Int): Nothing = decodeError {
     if ((s ^ sx) < 0) "expected digit"
     else if (state <= 0) "expected '-' or digit"
     else "expected '\"' or '-' or digit"
   }
 
+  @noinline
   private[this] def durationError(): Nothing = decodeError("illegal duration")
 
+  @noinline
   private[this] def durationError(state: Int): Nothing = decodeError(
     state match {
       case -1 => "expected 'D' or digit"
@@ -4413,14 +4547,17 @@ final class JsonReader private[json] (
     }
   )
 
+  @noinline
   private[this] def yearError(t: Byte, maxDigits: Int, b: Byte, yearDigits: Int): Nothing = {
     if (b != '-' && yearDigits == 4) digitError()
     if (yearDigits == maxDigits) tokenError(t)
     tokenOrDigitError(t)
   }
 
+  @noinline
   private[this] def yearError(): Nothing = decodeError("illegal year")
 
+  @noinline
   private[this] def monthDayError(pos: Int): Nothing = {
     val buf = this.buf
     if (buf(pos) != '-' || buf(pos + 1) != '-') tokenError('-')
@@ -4434,20 +4571,27 @@ final class JsonReader private[json] (
     tokenError('"')
   }
 
+  @noinline
   private[this] def monthError(): Nothing = decodeError("illegal month")
 
+  @noinline
   private[this] def dayError(): Nothing = decodeError("illegal day")
 
+  @noinline
   private[this] def hourError(): Nothing = decodeError("illegal hour")
 
+  @noinline
   private[this] def minuteError(): Nothing = decodeError("illegal minute")
 
+  @noinline
   private[this] def secondError(): Nothing = decodeError("illegal second")
 
+  @noinline
   private[this] def nanoError(nanoDigitWeight: Int, t: Byte): Nothing =
     if (nanoDigitWeight == 0) tokenError(t)
     else tokenOrDigitError(t)
 
+  @noinline
   private[this] def timeError(nanoDigitWeight: Int): Nothing = decodeError {
     if (nanoDigitWeight == -2) "expected '.' or '+' or '-' or 'Z'"
     else if (nanoDigitWeight == -1) "expected ':' or '+' or '-' or 'Z'"
@@ -4455,16 +4599,22 @@ final class JsonReader private[json] (
     else "expected '+' or '-' or 'Z' or digit"
   }
 
+  @noinline
   private[this] def timezoneError(): Nothing = decodeError("illegal timezone")
 
+  @noinline
   private[this] def timezoneOffsetError(): Nothing = decodeError("illegal timezone offset")
 
+  @noinline
   private[this] def timezoneOffsetHourError(): Nothing = decodeError("illegal timezone offset hour")
 
+  @noinline
   private[this] def timezoneOffsetMinuteError(): Nothing = decodeError("illegal timezone offset minute")
 
+  @noinline
   private[this] def timezoneOffsetSecondError(): Nothing = decodeError("illegal timezone offset second")
 
+  @noinline
   private[this] def zonedDateTimeError(nanoDigitWeight: Int): Nothing = decodeError {
     if (nanoDigitWeight > -3) "expected '[' or '\"'"
     else "expected ':' or '[' or '\"'"
@@ -4697,6 +4847,7 @@ final class JsonReader private[json] (
     parseChar(loadMoreOrError(pos))
   }
 
+  @inline
   private[this] def readEscapedUnicode(pos: Int, buf: Array[Byte]): Char = {
     val ns = nibbles
     val x  =
@@ -4708,55 +4859,65 @@ final class JsonReader private[json] (
     x.toChar
   }
 
+  @noinline
   private[this] def hexDigitError(): Nothing = decodeError("expected hex digit")
 
+  @noinline
   private[this] def characterError(): Nothing = decodeError("illegal character")
 
+  @noinline
   private[this] def escapeSequenceError(): Nothing = decodeError("illegal escape sequence")
 
+  @noinline
   private[this] def surrogateCharacterError(): Nothing = decodeError("illegal surrogate character")
 
+  @noinline
   private[this] def unescapedControlCharacterError(): Nothing = decodeError("unescaped control character")
 
+  @noinline
   private[this] def malformedBytesError(b1: Byte): Nothing = {
-    var i = appendString("malformed byte(s): 0x", 0)
-    i = appendHexByte(b1, i, hexDigits)
-    decodeError(i)
+    var idx = appendString("malformed byte(s): 0x", 0)
+    idx = appendHexByte(b1, idx, hexDigits)
+    decodeError(idx)
   }
 
+  @noinline
   private[this] def malformedBytesError(b1: Byte, b2: Byte): Nothing = {
-    val ds = hexDigits
-    var i  = appendString("malformed byte(s): 0x", 0)
-    i = appendHexByte(b1, i, ds)
-    i = appendString(", 0x", i)
-    i = appendHexByte(b2, i, ds)
-    decodeError(i)
+    val ds  = hexDigits
+    var idx = appendString("malformed byte(s): 0x", 0)
+    idx = appendHexByte(b1, idx, ds)
+    idx = appendString(", 0x", idx)
+    idx = appendHexByte(b2, idx, ds)
+    decodeError(idx)
   }
 
+  @noinline
   private[this] def malformedBytesError(b1: Byte, b2: Byte, b3: Byte): Nothing = {
-    val ds = hexDigits
-    var i  = appendString("malformed byte(s): 0x", 0)
-    i = appendHexByte(b1, i, ds)
-    i = appendString(", 0x", i)
-    i = appendHexByte(b2, i, ds)
-    i = appendString(", 0x", i)
-    i = appendHexByte(b3, i, ds)
-    decodeError(i)
+    val ds  = hexDigits
+    var idx = appendString("malformed byte(s): 0x", 0)
+    idx = appendHexByte(b1, idx, ds)
+    idx = appendString(", 0x", idx)
+    idx = appendHexByte(b2, idx, ds)
+    idx = appendString(", 0x", idx)
+    idx = appendHexByte(b3, idx, ds)
+    decodeError(idx)
   }
 
+  @noinline
   private[this] def malformedBytesError(b1: Byte, b2: Byte, b3: Byte, b4: Byte): Nothing = {
-    val ds = hexDigits
-    var i  = appendString("malformed byte(s): 0x", 0)
-    i = appendHexByte(b1, i, ds)
-    i = appendString(", 0x", i)
-    i = appendHexByte(b2, i, ds)
-    i = appendString(", 0x", i)
-    i = appendHexByte(b3, i, ds)
-    i = appendString(", 0x", i)
-    i = appendHexByte(b4, i, ds)
-    decodeError(i)
+    val ds  = hexDigits
+    var idx = appendString("malformed byte(s): 0x", 0)
+    idx = appendHexByte(b1, idx, ds)
+    idx = appendString(", 0x", idx)
+    idx = appendHexByte(b2, idx, ds)
+    idx = appendString(", 0x", idx)
+    idx = appendHexByte(b3, idx, ds)
+    idx = appendString(", 0x", idx)
+    idx = appendHexByte(b4, idx, ds)
+    decodeError(idx)
   }
 
+  @noinline
   private[this] def appendHexByte(b: Byte, i: Int, ds: Array[Char]): Int = {
     ensureCharBufCapacity(i + 2)
     charBuf(i) = ds(b >> 4 & 0xf)
@@ -4764,6 +4925,7 @@ final class JsonReader private[json] (
     i + 2
   }
 
+  @noinline
   private[this] def growCharBuf(required: Int): Int = {
     var charBufLen     = charBuf.length
     val maxCharBufSize = config.maxCharBufSize
@@ -4774,18 +4936,28 @@ final class JsonReader private[json] (
     charBufLen
   }
 
+  @inline
   private[this] def ensureCharBufCapacity(required: Int): Unit =
     if (charBuf.length < required) growCharBuf(required): Unit
 
   @tailrec
-  private[this] def skipString(evenBackSlashes: Boolean, pos: Int): Int =
-    if (pos < tail) {
-      if (evenBackSlashes) {
-        val b = buf(pos)
-        if (b == '"') pos + 1
-        else skipString(b != '\\', pos + 1)
-      } else skipString(evenBackSlashes = true, pos + 1)
-    } else skipString(evenBackSlashes, loadMoreOrError(pos))
+  private def skipString(p: Int): Int = {
+    var buf = this.buf
+    var pos = p
+    while (pos < tail) {
+      val b = buf(pos)
+      pos += 1
+      if (b == '"') return pos
+      if (b == '\\') {
+        pos += 1
+        if (pos > tail) {
+          pos = loadMoreOrError(pos - 2)
+          buf = this.buf
+        }
+      }
+    }
+    skipString(loadMoreOrError(pos))
+  }
 
   private[this] def skipNumber(p: Int): Int = {
     var pos = p
@@ -4807,22 +4979,30 @@ final class JsonReader private[json] (
   private[this] def skipObject(level: Int, pos: Int): Int =
     if (pos < tail) {
       val b = buf(pos)
-      if (b == '"') skipObject(level, skipString(evenBackSlashes = true, pos + 1))
-      else if (b == '{') skipObject(level + 1, pos + 1)
-      else if (b != '}') skipObject(level, pos + 1)
-      else if (level != 0) skipObject(level - 1, pos + 1)
-      else pos + 1
+      if (b == '"') skipObject(level, skipString(pos + 1))
+      else
+        skipObject(
+          if (b == '{') level + 1
+          else if (b != '}') level
+          else if (level != 0) level - 1
+          else return pos + 1,
+          pos + 1
+        )
     } else skipObject(level, loadMoreOrError(pos))
 
   @tailrec
   private[this] def skipArray(level: Int, pos: Int): Int =
     if (pos < tail) {
       val b = buf(pos)
-      if (b == '"') skipArray(level, skipString(evenBackSlashes = true, pos + 1))
-      else if (b == '[') skipArray(level + 1, pos + 1)
-      else if (b != ']') skipArray(level, pos + 1)
-      else if (level != 0) skipArray(level - 1, pos + 1)
-      else pos + 1
+      if (b == '"') skipArray(level, skipString(pos + 1))
+      else
+        skipArray(
+          if (b == '[') level + 1
+          else if (b != ']') level
+          else if (level != 0) level - 1
+          else return pos + 1,
+          pos + 1
+        )
     } else skipArray(level, loadMoreOrError(pos))
 
   @tailrec
@@ -4832,15 +5012,18 @@ final class JsonReader private[json] (
     else skipFixedBytes(n, loadMoreOrError(pos))
   }
 
+  @noinline
   private[this] def loadMoreOrError(pos: Int): Int = {
     if ((bbuf eq null) && (in eq null)) endOfInputError()
     loadMore(pos, throwOnEndOfInput = true)
   }
 
+  @noinline
   private[this] def loadMore(pos: Int): Int =
     if ((bbuf eq null) && (in eq null)) pos
     else loadMore(pos, throwOnEndOfInput = false)
 
+  @noinline
   private[this] def loadMore(pos: Int, throwOnEndOfInput: Boolean): Int = {
     var newPos = pos
     val offset =
@@ -4850,15 +5033,15 @@ final class JsonReader private[json] (
       newPos -= offset
       val buf       = this.buf
       val remaining = tail - offset
-      var i         = 0
-      while (i < remaining) {
-        buf(i) = buf(i + offset)
-        i += 1
+      var idx       = 0
+      while (idx < remaining) {
+        buf(idx) = buf(idx + offset)
+        idx += 1
       }
-      i = 0
-      while (i < markNum) {
-        marks(i) -= offset
-        i += 1
+      idx = 0
+      while (idx < markNum) {
+        marks(idx) -= offset
+        idx += 1
       }
       tail = remaining
       head = newPos
@@ -4874,6 +5057,7 @@ final class JsonReader private[json] (
     newPos
   }
 
+  @noinline
   private[this] def growBuf(): Unit = {
     var bufLen     = buf.length
     val maxBufSize = config.maxBufSize
@@ -4883,14 +5067,19 @@ final class JsonReader private[json] (
     buf = java.util.Arrays.copyOf(buf, bufLen)
   }
 
+  @noinline
   private[this] def tooLongInputError(): Nothing = decodeError("too long part of input exceeded 'maxBufSize'")
 
+  @noinline
   private[this] def tooLongStringError(): Nothing = decodeError("too long string exceeded 'maxCharBufSize'")
 
+  @noinline
   private[this] def endOfInputError(): Nothing = decodeError("unexpected end of input")
 
+  @inline
   private[this] def reallocateBufToPreferredSize(): Unit = buf = new Array[Byte](config.preferredBufSize)
 
+  @inline
   private[this] def reallocateCharBufToPreferredSize(): Unit = charBuf = new Array[Char](config.preferredCharBufSize)
 }
 
@@ -5043,7 +5232,7 @@ object JsonReader {
     -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1
   )
   private final val zoneOffsets: Array[ZoneOffset]          = new Array(145)
-  private final val zoneIds: ConcurrentHashMap[Key, ZoneId] = new ConcurrentHashMap(256)
+  private final val zoneIds: ConcurrentHashMap[Key, ZoneId] = new ConcurrentHashMap(256, 0.5f)
   private final val hexDigits: Array[Char]                  =
     Array('0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f')
 
@@ -5076,6 +5265,7 @@ private class Key {
   private[this] var from: Int       = 0
   private[this] var to: Int         = 0
 
+  @inline
   def set(hash: Int, bs: Array[Byte], from: Int, to: Int): Unit = {
     this.hash = hash
     this.bs = bs
@@ -5092,6 +5282,7 @@ private class Key {
     k
   }
 
+  @inline
   override def hashCode: Int = hash
 
   override def equals(obj: Any): Boolean = {
@@ -5099,20 +5290,23 @@ private class Key {
     val off  = from
     val koff = k.fromIndex
     val len  = to - off
-    k.toIndex - koff == len && {
-      val bs  = this.bs
-      val kbs = k.bytes
-      var i   = 0
-      while (i < len && kbs(koff + i) == bs(off + i)) i += 1
-      i == len
-    }
+    if (k.toIndex - koff != len) return false
+    val bs  = this.bs
+    val kbs = k.bytes
+    var i   = 0
+    while (i < len && kbs(koff + i) == bs(off + i)) i += 1
+    i == len
   }
 
+  @inline
   override def toString: String = new String(bs, 0, from, to - from): @nowarn
 
+  @inline
   private def bytes: Array[Byte] = bs
 
+  @inline
   private def fromIndex: Int = from
 
+  @inline
   private def toIndex: Int = to
 }

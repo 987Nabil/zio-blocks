@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema.xml
 
 import zio.blocks.chunk.Chunk
@@ -97,7 +113,7 @@ object XmlWriterSpec extends SchemaBaseSpec {
           Chunk.empty
         )
         val result = XmlWriter.write(elem)
-        assertTrue(result.contains("A &amp; B"))
+        assertTrue(result == "<root attr=\"A &amp; B\"/>")
       },
       test("escapes < in attribute values") {
         val elem = Xml.Element(
@@ -106,7 +122,7 @@ object XmlWriterSpec extends SchemaBaseSpec {
           Chunk.empty
         )
         val result = XmlWriter.write(elem)
-        assertTrue(result.contains("A &lt; B"))
+        assertTrue(result == "<root attr=\"A &lt; B\"/>")
       },
       test("escapes \" in attribute values") {
         val elem = Xml.Element(
@@ -115,7 +131,7 @@ object XmlWriterSpec extends SchemaBaseSpec {
           Chunk.empty
         )
         val result = XmlWriter.write(elem)
-        assertTrue(result.contains("&quot;") || result.contains("&apos;"))
+        assertTrue(result == "<root attr=\"Say &quot;Hello&quot;\"/>")
       },
       test("escapes ' in attribute values") {
         val elem = Xml.Element(
@@ -124,7 +140,7 @@ object XmlWriterSpec extends SchemaBaseSpec {
           Chunk.empty
         )
         val result = XmlWriter.write(elem)
-        assertTrue(result.contains("&apos;") || result.contains("&quot;"))
+        assertTrue(result == "<root attr=\"It&apos;s here\"/>")
       }
     ),
     suite("indentation")(
@@ -138,7 +154,7 @@ object XmlWriterSpec extends SchemaBaseSpec {
         )
         val config = WriterConfig(indentStep = 2)
         val result = XmlWriter.write(elem, config)
-        assertTrue(result.contains("\n"))
+        assertTrue(result == "<root>\n  <child>text</child>\n</root>")
       },
       test("writes without indentation by default") {
         val elem = Xml.Element(
@@ -149,7 +165,7 @@ object XmlWriterSpec extends SchemaBaseSpec {
           )
         )
         val result = XmlWriter.write(elem)
-        assertTrue(!result.contains("\n"))
+        assertTrue(result == "<root><child/></root>")
       }
     ),
     suite("XML declaration")(
@@ -168,7 +184,7 @@ object XmlWriterSpec extends SchemaBaseSpec {
         val elem   = Xml.Element(XmlName("root"), Chunk.empty, Chunk.empty)
         val config = WriterConfig(includeDeclaration = true, encoding = "UTF-16")
         val result = XmlWriter.write(elem, config)
-        assertTrue(result.contains("UTF-16"))
+        assertTrue(result == "<?xml version=\"1.0\" encoding=\"UTF-16\"?><root/>")
       }
     ),
     suite("writeToBytes")(

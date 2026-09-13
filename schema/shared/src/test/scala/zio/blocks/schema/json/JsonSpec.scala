@@ -1,11 +1,26 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema.json
 
 import zio.blocks.chunk.Chunk
 import zio.blocks.schema._
-import zio.blocks.schema.JavaTimeGen._
 import zio.blocks.schema.SchemaError
 import zio.test._
-import zio.test.Assertion.{equalTo, isRight}
+import zio.test.Assertion.equalTo
 import java.time._
 import java.util.{Currency, UUID}
 
@@ -194,7 +209,10 @@ object JsonSpec extends SchemaBaseSpec {
             val isLarge = value.unwrap(JsonType.Number).exists(_ > 10)
             inNums && isLarge
           }
-          assertTrue(result.get("nums").as[Chunk[Int]] == Right(Chunk(1, 5)), result.get("strs").isSuccess)
+          assertTrue(
+            result.get("nums").as[Chunk[Int]] == Right(Chunk(1, 5)),
+            result.get("strs").isSuccess
+          )
         },
         test("retain keeps only matching values in object") {
           val json   = Json.Object("a" -> Json.Number(1), "b" -> Json.String("hi"), "c" -> Json.Number(2))
@@ -964,7 +982,11 @@ object JsonSpec extends SchemaBaseSpec {
             Json.from("hello") == Json.String("hello"),
             Json.from(42) == Json.Number(42),
             Json.from(true) == Json.Boolean(true),
-            Json.from(Chunk(1, 2, 3)) == Json.Array(Json.Number(1), Json.Number(2), Json.Number(3))
+            Json.from(Chunk(1, 2, 3)) == Json.Array(
+              Json.Number(1),
+              Json.Number(2),
+              Json.Number(3)
+            )
           )
         }
       )
@@ -1100,34 +1122,6 @@ object JsonSpec extends SchemaBaseSpec {
       test("decode Map") {
         val json = Json.Object("a" -> Json.Number(1), "b" -> Json.Number(2))
         assertTrue(json.as[Map[String, Int]] == Right(Map("a" -> 1, "b" -> 2)))
-      }
-    ),
-    suite("JsonEncoder")(
-      test("encode primitives") {
-        assertTrue(
-          JsonEncoder[String].encode("hello") == Json.String("hello"),
-          JsonEncoder[Int].encode(42) == Json.Number(42),
-          JsonEncoder[Boolean].encode(true) == Json.Boolean(true)
-        )
-      },
-      test("encode Option") {
-        assertTrue(
-          JsonEncoder[Option[String]].encode(Some("hello")) == Json.String("hello"),
-          JsonEncoder[Option[String]].encode(None) == Json.Null
-        )
-      },
-      test("encode Chunk") {
-        assertTrue(
-          JsonEncoder[Chunk[Int]].encode(Chunk(1, 2, 3)) == Json.Array(Json.Number(1), Json.Number(2), Json.Number(3))
-        )
-      },
-      test("encode Map") {
-        val json = JsonEncoder[Map[String, Int]].encode(Map("a" -> 1, "b" -> 2))
-        assert(json.is(JsonType.Object))(equalTo(true)) &&
-        assertTrue(
-          json.get("a").as[BigDecimal] == Right(BigDecimal(1)),
-          json.get("b").as[BigDecimal] == Right(BigDecimal(2))
-        )
       }
     ),
     suite("additional coverage")(
@@ -2307,13 +2301,13 @@ object JsonSpec extends SchemaBaseSpec {
           JsonTestUtils.roundTrip(Json.String("hello"), """{"value":"hello"}""")
         },
         test("Json.Array serializes to JSON") {
-          JsonTestUtils.roundTrip(Json.Array(Json.Number(1)), """{"value":[{"Number":{"value":1}}]}""")
+          JsonTestUtils.roundTrip(Json.Array(Json.Number(1)), """{"value":[1]}""")
         },
         test("Json (variant) serializes to JSON") {
-          JsonTestUtils.roundTrip(Json.Null: Json, """{"Null":{}}""") &&
-          JsonTestUtils.roundTrip(Json.Boolean(true): Json, """{"Boolean":{"value":true}}""") &&
-          JsonTestUtils.roundTrip(Json.Number(1): Json, """{"Number":{"value":1}}""") &&
-          JsonTestUtils.roundTrip(Json.String("x"): Json, """{"String":{"value":"x"}}""")
+          JsonTestUtils.roundTrip(Json.Null: Json, "null") &&
+          JsonTestUtils.roundTrip(Json.Boolean(true): Json, "true") &&
+          JsonTestUtils.roundTrip(Json.Number(1): Json, "1") &&
+          JsonTestUtils.roundTrip(Json.String("x"): Json, """"x"""")
         }
       ),
       suite("Schema roundtrip")(
@@ -2348,374 +2342,6 @@ object JsonSpec extends SchemaBaseSpec {
           assertTrue(result == Right(json))
         }
       )
-    ),
-    suite("JsonDecoder combinators")(
-      test("map transforms decoded value") {
-        val decoder = JsonDecoder.intDecoder.map(_ * 2)
-        val result  = decoder.decode(Json.Number(21))
-        assertTrue(result == Right(42))
-      },
-      test("flatMap chains decoders") {
-        val decoder = JsonDecoder.intDecoder.flatMap { n =>
-          if (n > 0) Right(n * 2)
-          else Left(SchemaError("Expected positive number"))
-        }
-        val result1 = decoder.decode(Json.Number(21))
-        val result2 = decoder.decode(Json.Number(-5))
-        assertTrue(result1 == Right(42)) &&
-        assertTrue(result2.isLeft)
-      },
-      test("orElse tries alternative decoder on failure") {
-        val decoder = JsonDecoder.intDecoder.orElse(JsonDecoder.stringDecoder.map(_.toInt))
-        val result1 = decoder.decode(Json.Number(42))
-        val result2 = decoder.decode(Json.String("42"))
-        assertTrue(result1 == Right(42)) &&
-        assertTrue(result2 == Right(42))
-      },
-      test("tuple2Decoder decodes pairs from Json.Array") {
-        val decoder = JsonDecoder.tuple2Decoder[Int, String]
-        val result  = decoder.decode(Json.Array(Chunk(Json.Number(42), Json.String("test"))))
-        assertTrue(result == Right((42, "test")))
-      },
-      test("tuple2Decoder fails on wrong size") {
-        val decoder = JsonDecoder.tuple2Decoder[Int, String]
-        val result  = decoder.decode(Json.Array(Chunk(Json.Number(42))))
-        assertTrue(result.isLeft)
-      },
-      test("tuple3Decoder decodes triples from Json.Array") {
-        val decoder = JsonDecoder.tuple3Decoder[Int, String, Boolean]
-        val result  = decoder.decode(Json.Array(Chunk(Json.Number(42), Json.String("test"), Json.Boolean(true))))
-        assertTrue(result == Right((42, "test", true)))
-      },
-      test("tuple3Decoder fails on wrong size") {
-        val decoder = JsonDecoder.tuple3Decoder[Int, String, Boolean]
-        val result  = decoder.decode(Json.Array(Chunk(Json.Number(42), Json.String("test"))))
-        assertTrue(result.isLeft)
-      },
-      test("eitherDecoder decodes Left from Json.Object") {
-        val decoder = JsonDecoder.eitherDecoder[Int, String]
-        val result  = decoder.decode(Json.Object(Chunk("Left" -> Json.Number(42))))
-        assertTrue(result == Right(Left(42)))
-      },
-      test("eitherDecoder decodes Right from Json.Object") {
-        val decoder = JsonDecoder.eitherDecoder[Int, String]
-        val result  = decoder.decode(Json.Object(Chunk("Right" -> Json.String("test"))))
-        assertTrue(result == Right(Right("test")))
-      },
-      test("eitherDecoder fails on invalid structure") {
-        val decoder = JsonDecoder.eitherDecoder[Int, String]
-        val result  = decoder.decode(Json.Object(Chunk("Invalid" -> Json.Number(42))))
-        assertTrue(result.isLeft)
-      },
-      test("setDecoder decodes Set from Json.Array") {
-        val decoder = JsonDecoder.setDecoder[Int]
-        val result  = decoder.decode(Json.Array(Chunk(Json.Number(1), Json.Number(2), Json.Number(3))))
-        assertTrue(result == Right(Set(1, 2, 3)))
-      },
-      test("seqDecoder decodes Seq from Json.Array") {
-        val decoder = JsonDecoder.seqDecoder[Int]
-        val result  = decoder.decode(Json.Array(Chunk(Json.Number(1), Json.Number(2), Json.Number(3))))
-        assertTrue(result == Right(Seq(1, 2, 3)))
-      },
-      test("charDecoder decodes single character") {
-        assertTrue(JsonDecoder.charDecoder.decode(Json.String("a")) == Right('a'))
-      },
-      test("charDecoder fails on multi-char string") {
-        assertTrue(JsonDecoder.charDecoder.decode(Json.String("abc")).isLeft)
-      },
-      test("unitDecoder decodes null") {
-        assertTrue(JsonDecoder.unitDecoder.decode(Json.Null) == Right(()))
-      },
-      test("unitDecoder fails on non-null") {
-        assertTrue(JsonDecoder.unitDecoder.decode(Json.Number(42)).isLeft)
-      },
-      test("byteDecoder decodes valid byte") {
-        assertTrue(JsonDecoder.byteDecoder.decode(Json.Number(127)) == Right(127.toByte))
-      },
-      test("byteDecoder fails on out-of-range number") {
-        assertTrue(JsonDecoder.byteDecoder.decode(Json.Number(1000)).isLeft)
-      },
-      test("shortDecoder decodes valid short") {
-        assertTrue(JsonDecoder.shortDecoder.decode(Json.Number(32767)) == Right(32767.toShort))
-      },
-      test("shortDecoder fails on out-of-range number") {
-        assertTrue(JsonDecoder.shortDecoder.decode(Json.Number(100000)).isLeft)
-      }
-    ),
-    suite("JsonEncoder combinators")(
-      test("contramap transforms input before encoding") {
-        val encoder = JsonEncoder.intEncoder.contramap[String](_.toInt)
-        val result  = encoder.encode("42")
-        assertTrue(result == Json.Number(42))
-      },
-      test("tuple2Encoder encodes pairs to Json.Array") {
-        val encoder = JsonEncoder.tuple2Encoder[Int, String]
-        val result  = encoder.encode((42, "test"))
-        assertTrue(result == Json.Array(Chunk(Json.Number(42), Json.String("test"))))
-      },
-      test("tuple3Encoder encodes triples to Json.Array") {
-        val encoder = JsonEncoder.tuple3Encoder[Int, String, Boolean]
-        val result  = encoder.encode((42, "test", true))
-        assertTrue(result == Json.Array(Chunk(Json.Number(42), Json.String("test"), Json.Boolean(true))))
-      },
-      test("eitherEncoder encodes Left to Json.Object") {
-        val encoder = JsonEncoder.eitherEncoder[Int, String]
-        val result  = encoder.encode(Left(42))
-        assertTrue(result == Json.Object(Chunk("Left" -> Json.Number(42))))
-      },
-      test("eitherEncoder encodes Right to Json.Object") {
-        val encoder = JsonEncoder.eitherEncoder[Int, String]
-        val result  = encoder.encode(Right("test"))
-        assertTrue(result == Json.Object(Chunk("Right" -> Json.String("test"))))
-      },
-      test("setEncoder encodes Set to Json.Array") {
-        val encoder = JsonEncoder.setEncoder[Int]
-        val result  = encoder.encode(Set(1, 2, 3))
-        assertTrue(result.isInstanceOf[Json.Array])
-      },
-      test("seqEncoder encodes Seq to Json.Array") {
-        val encoder = JsonEncoder.seqEncoder[Int]
-        val result  = encoder.encode(Seq(1, 2, 3))
-        assertTrue(result == Json.Array(Chunk(Json.Number(1), Json.Number(2), Json.Number(3))))
-      },
-      test("byteEncoder encodes byte") {
-        assertTrue(JsonEncoder.byteEncoder.encode(127.toByte) == Json.Number(127))
-      },
-      test("shortEncoder encodes short") {
-        assertTrue(JsonEncoder.shortEncoder.encode(32767.toShort) == Json.Number(32767))
-      },
-      test("charEncoder encodes char") {
-        assertTrue(JsonEncoder.charEncoder.encode('a') == Json.String("a"))
-      },
-      test("unitEncoder encodes unit") {
-        assertTrue(JsonEncoder.unitEncoder.encode(()) == Json.Null)
-      },
-      test("bigIntEncoder encodes BigInt") {
-        val result = JsonEncoder.bigIntEncoder.encode(BigInt("123456789012345678901234567890"))
-        assertTrue(result == Json.Number(BigDecimal("123456789012345678901234567890")))
-      }
-    ),
-    suite("JsonDecoder Java time types")(
-      test("dayOfWeekDecoder decodes day") {
-        check(genDayOfWeek) { x =>
-          assertTrue(JsonDecoder.dayOfWeekDecoder.decode(Json.String(x.toString)) == Right(x))
-        } &&
-        assertTrue(JsonDecoder.dayOfWeekDecoder.decode(Json.String("invalid")).isLeft)
-      },
-      test("durationDecoder decodes duration") {
-        check(genDuration) { x =>
-          assertTrue(JsonDecoder.durationDecoder.decode(Json.String(x.toString)) == Right(x))
-        } &&
-        assertTrue(JsonDecoder.durationDecoder.decode(Json.String("invalid")).isLeft)
-      },
-      test("instantDecoder decodes instant") {
-        check(genInstant) { x =>
-          assertTrue(JsonDecoder.instantDecoder.decode(Json.String(x.toString)) == Right(x))
-        } &&
-        assertTrue(JsonDecoder.instantDecoder.decode(Json.String("invalid")).isLeft)
-      },
-      test("localDateDecoder decodes local date") {
-        check(genLocalDate) { x =>
-          assertTrue(JsonDecoder.localDateDecoder.decode(Json.String(x.toString)) == Right(x))
-        } &&
-        assertTrue(JsonDecoder.localDateDecoder.decode(Json.String("invalid")).isLeft)
-      },
-      test("localDateTimeDecoder decodes local datetime") {
-        check(genLocalDateTime) { x =>
-          assertTrue(JsonDecoder.localDateTimeDecoder.decode(Json.String(x.toString)) == Right(x))
-        } &&
-        assertTrue(JsonDecoder.localDateTimeDecoder.decode(Json.String("invalid")).isLeft)
-      },
-      test("localTimeDecoder decodes local time") {
-        check(genLocalTime) { x =>
-          assertTrue(JsonDecoder.localTimeDecoder.decode(Json.String(x.toString)) == Right(x))
-        } &&
-        assertTrue(JsonDecoder.localTimeDecoder.decode(Json.String("invalid")).isLeft)
-      },
-      test("monthDecoder decodes month") {
-        check(genMonth) { x =>
-          assertTrue(JsonDecoder.monthDecoder.decode(Json.String(x.toString)) == Right(x))
-        } &&
-        assertTrue(JsonDecoder.monthDecoder.decode(Json.String("invalid")).isLeft)
-      },
-      test("monthDayDecoder decodes month-day") {
-        check(genMonthDay) { x =>
-          assertTrue(JsonDecoder.monthDayDecoder.decode(Json.String(x.toString)) == Right(x))
-        } &&
-        assertTrue(JsonDecoder.monthDayDecoder.decode(Json.String("invalid")).isLeft)
-      },
-      test("offsetDateTimeDecoder decodes offset datetime") {
-        check(genOffsetDateTime) { x =>
-          assertTrue(JsonDecoder.offsetDateTimeDecoder.decode(Json.String(x.toString)) == Right(x))
-        } &&
-        assertTrue(JsonDecoder.offsetDateTimeDecoder.decode(Json.String("invalid")).isLeft)
-      },
-      test("offsetTimeDecoder decodes offset time") {
-        check(genOffsetTime) { x =>
-          assertTrue(JsonDecoder.offsetTimeDecoder.decode(Json.String(x.toString)) == Right(x))
-        } &&
-        assertTrue(JsonDecoder.offsetTimeDecoder.decode(Json.String("invalid")).isLeft)
-      },
-      test("periodDecoder decodes period") {
-        check(genPeriod) { x =>
-          assertTrue(JsonDecoder.periodDecoder.decode(Json.String(x.toString)) == Right(x))
-        } &&
-        assertTrue(JsonDecoder.periodDecoder.decode(Json.String("invalid")).isLeft)
-      },
-      test("yearDecoder decodes year") {
-        check(genYear) { x =>
-          assertTrue(JsonDecoder.yearDecoder.decode(Json.String(x.toString)) == Right(x))
-        } &&
-        assertTrue(JsonDecoder.yearDecoder.decode(Json.String("invalid")).isLeft)
-      },
-      test("yearMonthDecoder decodes year-month") {
-        check(genYearMonth) { x =>
-          assertTrue(JsonDecoder.yearMonthDecoder.decode(Json.String(x.toString)) == Right(x))
-        } &&
-        assertTrue(JsonDecoder.yearMonthDecoder.decode(Json.String("invalid")).isLeft)
-      },
-      test("zoneOffsetDecoder decodes zone offset") {
-        check(genZoneOffset) { x =>
-          assertTrue(JsonDecoder.zoneOffsetDecoder.decode(Json.String(x.toString)) == Right(x))
-        } &&
-        assertTrue(JsonDecoder.zoneOffsetDecoder.decode(Json.String("invalid")).isLeft)
-      },
-      test("zoneIdDecoder decodes zone id") {
-        check(genZoneId) { x =>
-          assertTrue(JsonDecoder.zoneIdDecoder.decode(Json.String(x.toString)) == Right(x))
-        } &&
-        assertTrue(JsonDecoder.zoneIdDecoder.decode(Json.String("invalid")).isLeft)
-      },
-      test("zonedDateTimeDecoder decodes zoned datetime") {
-        check(genZonedDateTime) { x =>
-          assertTrue(JsonDecoder.zonedDateTimeDecoder.decode(Json.String(x.toString)) == Right(x))
-        } &&
-        assertTrue(JsonDecoder.zonedDateTimeDecoder.decode(Json.String("invalid")).isLeft)
-      },
-      test("uuidDecoder decodes UUID") {
-        check(Gen.uuid) { x =>
-          assertTrue(JsonDecoder.uuidDecoder.decode(Json.String(x.toString)) == Right(x))
-        } &&
-        assertTrue(JsonDecoder.uuidDecoder.decode(Json.String("invalid")).isLeft)
-      },
-      test("currencyDecoder decodes currency") {
-        check(Gen.currency) { x =>
-          assertTrue(JsonDecoder.currencyDecoder.decode(Json.String(x.toString)) == Right(x))
-        } &&
-        assertTrue(JsonDecoder.currencyDecoder.decode(Json.String("invalid")).isLeft)
-      }
-    ),
-    suite("JsonEncoder Java time types")(
-      test("dayOfWeekEncoder encodes day") {
-        check(genDayOfWeek) { x =>
-          assertTrue(JsonEncoder.dayOfWeekEncoder.encode(x) == Json.String(x.toString))
-        }
-      },
-      test("durationEncoder encodes duration") {
-        check(genDuration) { x =>
-          assertTrue(JsonEncoder.durationEncoder.encode(x) == Json.String(x.toString))
-        }
-      },
-      test("instantEncoder encodes instant") {
-        check(genInstant) { x =>
-          assertTrue(JsonEncoder.instantEncoder.encode(x) == Json.String(x.toString))
-        }
-      },
-      test("localDateEncoder encodes local date") {
-        check(genLocalDate) { x =>
-          assertTrue(JsonEncoder.localDateEncoder.encode(x) == Json.String(x.toString))
-        }
-      },
-      test("localDateTimeEncoder encodes local datetime") {
-        check(genLocalDateTime) { x =>
-          assertTrue(JsonEncoder.localDateTimeEncoder.encode(x) == Json.String(x.toString))
-        }
-      },
-      test("localTimeEncoder encodes local time") {
-        check(genLocalTime) { x =>
-          assertTrue(JsonEncoder.localTimeEncoder.encode(x) == Json.String(x.toString))
-        }
-      },
-      test("monthEncoder encodes month") {
-        check(genMonth) { x =>
-          assertTrue(JsonEncoder.monthEncoder.encode(x) == Json.String(x.toString))
-        }
-      },
-      test("monthDayEncoder encodes month-day") {
-        check(genMonthDay) { x =>
-          assertTrue(JsonEncoder.monthDayEncoder.encode(x) == Json.String(x.toString))
-        }
-      },
-      test("offsetDateTimeEncoder encodes offset datetime") {
-        check(genOffsetDateTime) { x =>
-          assertTrue(JsonEncoder.offsetDateTimeEncoder.encode(x) == Json.String(x.toString))
-        }
-      },
-      test("offsetTimeEncoder encodes offset time") {
-        check(genOffsetTime) { x =>
-          assertTrue(JsonEncoder.offsetTimeEncoder.encode(x) == Json.String(x.toString))
-        }
-      },
-      test("periodEncoder encodes period") {
-        check(genPeriod) { x =>
-          assertTrue(JsonEncoder.periodEncoder.encode(x) == Json.String(x.toString))
-        }
-      },
-      test("yearEncoder encodes year") {
-        check(genYear) { x =>
-          assertTrue(JsonEncoder.yearEncoder.encode(x) == Json.String(x.toString))
-        }
-      },
-      test("yearMonthEncoder encodes year-month") {
-        check(genYearMonth) { x =>
-          assertTrue(JsonEncoder.yearMonthEncoder.encode(x) == Json.String(x.toString))
-        }
-      },
-      test("zoneOffsetEncoder encodes zone offset") {
-        check(genZoneOffset) { x =>
-          assertTrue(JsonEncoder.zoneOffsetEncoder.encode(x) == Json.String(x.toString))
-        }
-      },
-      test("zoneIdEncoder encodes zone id") {
-        check(genZoneId) { x =>
-          assertTrue(JsonEncoder.zoneIdEncoder.encode(x) == Json.String(x.toString))
-        }
-      },
-      test("zonedDateTimeEncoder encodes zoned datetime") {
-        check(genZonedDateTime) { x =>
-          assertTrue(JsonEncoder.zonedDateTimeEncoder.encode(x) == Json.String(x.toString))
-        }
-      },
-      test("uuidEncoder encodes UUID") {
-        check(Gen.uuid) { x =>
-          assertTrue(JsonEncoder.uuidEncoder.encode(x) == Json.String(x.toString))
-        }
-      },
-      test("currencyEncoder encodes currency") {
-        check(Gen.currency) { x =>
-          assertTrue(JsonEncoder.currencyEncoder.encode(x) == Json.String(x.toString))
-        }
-      }
-    ),
-    suite("JsonDecoder error paths")(
-      test("vectorDecoder propagates element errors") {
-        val result =
-          JsonDecoder.vectorDecoder[Int].decode(Json.Array(Chunk(Json.Number(1), Json.String("not a number"))))
-        assertTrue(result.isLeft)
-      },
-      test("listDecoder propagates element errors") {
-        val result = JsonDecoder.listDecoder[Int].decode(Json.Array(Chunk(Json.Number(1), Json.String("not a number"))))
-        assertTrue(result.isLeft)
-      },
-      test("mapDecoder propagates value errors") {
-        val result = JsonDecoder
-          .mapDecoder[Int]
-          .decode(Json.Object(Chunk("a" -> Json.Number(1), "b" -> Json.String("not a number"))))
-        assertTrue(result.isLeft)
-      },
-      test("parseString fails on non-string") {
-        assertTrue(JsonDecoder.uuidDecoder.decode(Json.Number(123)).isLeft)
-      }
     ),
     suite("fromDynamicValue primitive coverage")(
       test("converts all PrimitiveValue types to Json") {
@@ -2768,59 +2394,6 @@ object JsonSpec extends SchemaBaseSpec {
           val json = Json.fromDynamicValue(DynamicValue.Primitive(pv))
           acc && assertTrue(check(json))
         }
-      }
-    ),
-    suite("JsonDecoder error branches")(
-      test("stringDecoder fails on non-string Json values") {
-        assertTrue(JsonDecoder[String].decode(Json.Number(42)).isLeft) &&
-        assertTrue(JsonDecoder[String].decode(Json.True).isLeft) &&
-        assertTrue(JsonDecoder[String].decode(Json.Null).isLeft) &&
-        assertTrue(JsonDecoder[String].decode(Json.Array.empty).isLeft) &&
-        assertTrue(JsonDecoder[String].decode(Json.Object.empty).isLeft)
-      },
-      test("booleanDecoder fails on non-boolean Json values") {
-        assertTrue(JsonDecoder[Boolean].decode(Json.String("true")).isLeft) &&
-        assertTrue(JsonDecoder[Boolean].decode(Json.Number(1)).isLeft) &&
-        assertTrue(JsonDecoder[Boolean].decode(Json.Null).isLeft)
-      },
-      test("intDecoder fails on non-number Json values") {
-        assertTrue(JsonDecoder[Int].decode(Json.String("42")).isLeft) &&
-        assertTrue(JsonDecoder[Int].decode(Json.True).isLeft) &&
-        assertTrue(JsonDecoder[Int].decode(Json.Null).isLeft)
-      },
-      test("intDecoder fails on non-integer number") {
-        assertTrue(JsonDecoder[Int].decode(Json.Number(3.14)).isLeft)
-      },
-      test("longDecoder fails on non-number Json values") {
-        assertTrue(JsonDecoder[Long].decode(Json.String("42")).isLeft) &&
-        assertTrue(JsonDecoder[Long].decode(Json.True).isLeft)
-      },
-      test("doubleDecoder fails on non-number Json values") {
-        assertTrue(JsonDecoder[Double].decode(Json.String("3.14")).isLeft) &&
-        assertTrue(JsonDecoder[Double].decode(Json.Null).isLeft)
-      },
-      test("floatDecoder fails on non-number Json values") {
-        assertTrue(JsonDecoder[Float].decode(Json.String("3.14")).isLeft)
-      },
-      test("byteDecoder fails on out-of-range values") {
-        assertTrue(JsonDecoder[Byte].decode(Json.Number(128)).isLeft) &&
-        assertTrue(JsonDecoder[Byte].decode(Json.Number(-129)).isLeft)
-      },
-      test("shortDecoder fails on out-of-range values") {
-        assertTrue(JsonDecoder[Short].decode(Json.Number(32768)).isLeft) &&
-        assertTrue(JsonDecoder[Short].decode(Json.Number(-32769)).isLeft)
-      },
-      test("optionDecoder handles None for null") {
-        assert(JsonDecoder[Option[Int]].decode(Json.Null))(isRight(equalTo(None)))
-      },
-      test("optionDecoder handles Some for non-null") {
-        assert(JsonDecoder[Option[Int]].decode(Json.Number(42)))(isRight(equalTo(Some(42))))
-      },
-      test("listDecoder fails on non-array") {
-        assertTrue(JsonDecoder[List[Int]].decode(Json.Object.empty).isLeft)
-      },
-      test("mapDecoder fails on non-object") {
-        assertTrue(JsonDecoder[Map[String, Int]].decode(Json.Array.empty).isLeft)
       }
     ),
     suite("Json path operation coverage")(
@@ -2894,7 +2467,7 @@ object JsonSpec extends SchemaBaseSpec {
         val json   = Json.Object("name" -> Json.String("Alice"), "age" -> Json.Number(30), "active" -> Json.Boolean(true))
         val path   = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("string"))
         val result = json.get(path)
-        assertTrue(result.toChunk.toVector == Vector(Json.String("Alice")))
+        assertTrue(result.toChunk == Chunk(Json.String("Alice")))
       },
       test("SchemaSearch finds deeply nested matches") {
         val inner  = Json.Object("name" -> Json.String("Bob"))
@@ -2902,12 +2475,12 @@ object JsonSpec extends SchemaBaseSpec {
         val outer  = Json.Object("data" -> middle)
         val path   = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("string"))
         val result = outer.get(path)
-        assertTrue(result.toChunk.toVector == Vector(Json.String("Bob")))
+        assertTrue(result.toChunk == Chunk(Json.String("Bob")))
       },
       test("SchemaSearch finds multiple matches") {
         val json   = Json.Object("name" -> Json.String("Alice"), "title" -> Json.String("Dr."))
         val path   = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("string"))
-        val result = json.get(path).toChunk.toVector
+        val result = json.get(path).toChunk
         assertTrue(
           result.length == 2,
           result.contains(Json.String("Alice")),
@@ -2923,7 +2496,7 @@ object JsonSpec extends SchemaBaseSpec {
       test("SchemaSearch checks each Array element") {
         val json   = Json.Array(Json.String("hello"), Json.Number(42), Json.String("world"))
         val path   = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("string"))
-        val result = json.get(path).toChunk.toVector
+        val result = json.get(path).toChunk
         assertTrue(
           result.length == 2,
           result(0) == Json.String("hello"),
@@ -2934,14 +2507,14 @@ object JsonSpec extends SchemaBaseSpec {
         val json   = Json.String("hello")
         val path   = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("string"))
         val result = json.get(path)
-        assertTrue(result.toChunk.toVector == Vector(Json.String("hello")))
+        assertTrue(result.toChunk == Chunk(Json.String("hello")))
       },
       test("SchemaSearch ordering is depth-first, left-to-right") {
         // Structure: { a: { x: "first" }, b: "second" }
         val inner  = Json.Object("x" -> Json.String("first"))
         val json   = Json.Object("a" -> inner, "b" -> Json.String("second"))
         val path   = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("string"))
-        val result = json.get(path).toChunk.toVector
+        val result = json.get(path).toChunk
         assertTrue(
           result.length == 2,
           result(0) == Json.String("first"),
@@ -2958,7 +2531,7 @@ object JsonSpec extends SchemaBaseSpec {
       test("SchemaSearch with Wildcard matches everything") {
         val json   = Json.Object("name" -> Json.String("Alice"), "count" -> Json.Number(5))
         val path   = DynamicOptic.root.searchSchema(SchemaRepr.Wildcard)
-        val result = json.get(path).toChunk.toVector
+        val result = json.get(path).toChunk
         // Should match: root object (DFS), then "Alice", then 5
         assertTrue(
           result.length == 3,
@@ -2970,8 +2543,8 @@ object JsonSpec extends SchemaBaseSpec {
       test("SchemaSearch with Record pattern matches nested objects") {
         val person = Json.Object("name" -> Json.String("Alice"), "age" -> Json.Number(30))
         val outer  = Json.Object("person" -> person, "count" -> Json.Number(5))
-        val path   = DynamicOptic.root.searchSchema(SchemaRepr.Record(Vector("name" -> SchemaRepr.Primitive("string"))))
-        val result = outer.get(path).toChunk.toVector
+        val path   = DynamicOptic.root.searchSchema(SchemaRepr.Record(Chunk("name" -> SchemaRepr.Primitive("string"))))
+        val result = outer.get(path).toChunk
         assertTrue(
           result.length == 1,
           result(0) == person
@@ -2982,15 +2555,15 @@ object JsonSpec extends SchemaBaseSpec {
         val json   = Json.Object("items" -> arr, "name" -> Json.String("test"))
         val path   = DynamicOptic.root.searchSchema(SchemaRepr.Sequence(SchemaRepr.Primitive("string")))
         val result = json.get(path)
-        assertTrue(result.toChunk.toVector == Vector(arr))
+        assertTrue(result.toChunk == Chunk(arr))
       },
       test("modify with SchemaSearch updates all matching values") {
         val json   = Json.Object("name" -> Json.String("Alice"), "title" -> Json.String("Dr."))
         val path   = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("string"))
         val result = json.modify(path)(_ => Json.String("REPLACED"))
         assertTrue(
-          result.get("name").toChunk.toVector == Vector(Json.String("REPLACED")),
-          result.get("title").toChunk.toVector == Vector(Json.String("REPLACED"))
+          result.get("name").toChunk == Chunk(Json.String("REPLACED")),
+          result.get("title").toChunk == Chunk(Json.String("REPLACED"))
         )
       },
       test("modify with SchemaSearch updates nested matches") {
@@ -2999,7 +2572,7 @@ object JsonSpec extends SchemaBaseSpec {
         val path   = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("string"))
         val result = outer.modify(path)(_ => Json.String("X"))
         assertTrue(
-          result.get("title").toChunk.toVector == Vector(Json.String("X")),
+          result.get("title").toChunk == Chunk(Json.String("X")),
           result.get("person").one.flatMap(_.get("name").one) == Right(Json.String("X"))
         )
       },
@@ -3039,7 +2612,7 @@ object JsonSpec extends SchemaBaseSpec {
         val json   = Json.Object("value" -> Json.Null)
         val path   = DynamicOptic.root.searchSchema(SchemaRepr.Optional(SchemaRepr.Primitive("string")))
         val result = json.get(path)
-        assertTrue(result.toChunk.toVector == Vector(Json.Null))
+        assertTrue(result.toChunk == Chunk(Json.Null))
       },
       test("modify with SchemaSearch returns unchanged when no matches") {
         val json   = Json.Object("count" -> Json.Number(5))
@@ -3055,16 +2628,16 @@ object JsonSpec extends SchemaBaseSpec {
       },
       test("SchemaSearch with numeric primitives matches Number") {
         val json       = Json.Object("value" -> Json.Number(42))
-        val expected   = Vector(Json.Number(42))
+        val expected   = Chunk(Json.Number(42))
         val intPath    = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("int"))
         val longPath   = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("long"))
         val doublePath = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("double"))
         val numberPath = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("number"))
         assertTrue(
-          json.get(intPath).toChunk.toVector == expected,
-          json.get(longPath).toChunk.toVector == expected,
-          json.get(doublePath).toChunk.toVector == expected,
-          json.get(numberPath).toChunk.toVector == expected
+          json.get(intPath).toChunk == expected,
+          json.get(longPath).toChunk == expected,
+          json.get(doublePath).toChunk == expected,
+          json.get(numberPath).toChunk == expected
         )
       },
       test("SchemaSearch handles complex nested structure") {
@@ -3076,7 +2649,7 @@ object JsonSpec extends SchemaBaseSpec {
           "metadata" -> Json.Object("title" -> Json.String("User List"))
         )
         val path   = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("string"))
-        val result = json.get(path).toChunk.toVector
+        val result = json.get(path).toChunk
         assertTrue(
           result.length == 3,
           result.contains(Json.String("Alice")),
@@ -3087,14 +2660,14 @@ object JsonSpec extends SchemaBaseSpec {
       test("large recursive structure does not stack overflow") {
         // Create a deeply nested structure with 500 levels
         var current: Json = Json.String("leaf")
-        var i             = 0
-        while (i < 500) {
+        var n             = 0
+        while (n < 500) {
           current = Json.Object("child" -> current)
-          i += 1
+          n += 1
         }
         val path   = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("string"))
         val result = current.get(path)
-        assertTrue(result.toChunk.toVector == Vector(Json.String("leaf")))
+        assertTrue(result.toChunk == Chunk(Json.String("leaf")))
       },
       // schemaSearchModifyJson — Array recursion
       test("modify with SchemaSearch updates matching values inside Array") {
@@ -3114,7 +2687,7 @@ object JsonSpec extends SchemaBaseSpec {
         )
         val path =
           DynamicOptic.root
-            .searchSchema(SchemaRepr.Record(Vector("name" -> SchemaRepr.Primitive("string"))))
+            .searchSchema(SchemaRepr.Record(Chunk("name" -> SchemaRepr.Primitive("string"))))
             .field(
               "name"
             )
@@ -3122,8 +2695,8 @@ object JsonSpec extends SchemaBaseSpec {
         // The matching object should have "name" deleted
         assertTrue(
           result.get("person").get("name").isEmpty,
-          result.get("person").get("age").toChunk.toVector == Vector(Json.Number(30)),
-          result.get("count").toChunk.toVector == Vector(Json.Number(5))
+          result.get("person").get("age").toChunk == Chunk(Json.Number(30)),
+          result.get("count").toChunk == Chunk(Json.Number(5))
         )
       },
       test("delete with SchemaSearch non-last through Array container") {
@@ -3134,7 +2707,7 @@ object JsonSpec extends SchemaBaseSpec {
         )
         val path =
           DynamicOptic.root
-            .searchSchema(SchemaRepr.Record(Vector("name" -> SchemaRepr.Primitive("string"))))
+            .searchSchema(SchemaRepr.Record(Chunk("name" -> SchemaRepr.Primitive("string"))))
             .field(
               "name"
             )
@@ -3166,7 +2739,7 @@ object JsonSpec extends SchemaBaseSpec {
         )
         val path =
           DynamicOptic.root
-            .searchSchema(SchemaRepr.Record(Vector("name" -> SchemaRepr.Primitive("string"))))
+            .searchSchema(SchemaRepr.Record(Chunk("name" -> SchemaRepr.Primitive("string"))))
             .field(
               "age"
             )
@@ -3174,7 +2747,7 @@ object JsonSpec extends SchemaBaseSpec {
         // "age" should be deleted from the matching record
         assertTrue(
           result.get("outer").get("inner").get("age").isEmpty,
-          result.get("outer").get("inner").get("name").toChunk.toVector == Vector(Json.String("Alice"))
+          result.get("outer").get("inner").get("name").toChunk == Chunk(Json.String("Alice"))
         )
       },
       test("delete with SchemaSearch non-last deleteMatchingRecurse through Array") {
@@ -3187,7 +2760,7 @@ object JsonSpec extends SchemaBaseSpec {
         )
         val path =
           DynamicOptic.root
-            .searchSchema(SchemaRepr.Record(Vector("name" -> SchemaRepr.Primitive("string"))))
+            .searchSchema(SchemaRepr.Record(Chunk("name" -> SchemaRepr.Primitive("string"))))
             .field(
               "age"
             )
@@ -3196,9 +2769,9 @@ object JsonSpec extends SchemaBaseSpec {
         assertTrue(
           items.length == 1,
           items(0).elements.length == 2,
-          items(0).elements(0).get("name").toChunk.toVector == Vector(Json.String("Alice")),
+          items(0).elements(0).get("name").toChunk == Chunk(Json.String("Alice")),
           items(0).elements(0).get("age").isEmpty,
-          items(0).elements(1).get("name").toChunk.toVector == Vector(Json.String("Bob")),
+          items(0).elements(1).get("name").toChunk == Chunk(Json.String("Bob")),
           items(0).elements(1).get("age").isEmpty
         )
       },
@@ -3216,7 +2789,7 @@ object JsonSpec extends SchemaBaseSpec {
           DynamicOptic.root
             .searchSchema(
               SchemaRepr.Record(
-                Vector("name" -> SchemaRepr.Primitive("string"), "age" -> SchemaRepr.Primitive("number"))
+                Chunk("name" -> SchemaRepr.Primitive("string"), "age" -> SchemaRepr.Primitive("number"))
               )
             )
             .field("age")
@@ -3228,9 +2801,9 @@ object JsonSpec extends SchemaBaseSpec {
         assertTrue(
           reports.length == 1,
           reports(0).elements(0).get("age").isEmpty,
-          reports(0).elements(0).get("name").toChunk.toVector == Vector(Json.String("Bob")),
+          reports(0).elements(0).get("name").toChunk == Chunk(Json.String("Bob")),
           reports(0).elements(1).get("age").isEmpty,
-          reports(0).elements(1).get("name").toChunk.toVector == Vector(Json.String("Charlie"))
+          reports(0).elements(1).get("name").toChunk == Chunk(Json.String("Charlie"))
         )
       },
       test("delete with SchemaSearch (non-last) propagates through deeply nested matching objects") {
@@ -3249,7 +2822,7 @@ object JsonSpec extends SchemaBaseSpec {
           DynamicOptic.root
             .searchSchema(
               SchemaRepr.Record(
-                Vector("name" -> SchemaRepr.Primitive("string"), "age" -> SchemaRepr.Primitive("number"))
+                Chunk("name" -> SchemaRepr.Primitive("string"), "age" -> SchemaRepr.Primitive("number"))
               )
             )
             .field("age")
@@ -3264,13 +2837,13 @@ object JsonSpec extends SchemaBaseSpec {
         val json = Json.Object("name" -> Json.String("Alice"), "age" -> Json.Number(30))
         val path =
           DynamicOptic.root
-            .searchSchema(SchemaRepr.Record(Vector("name" -> SchemaRepr.Primitive("string"))))
+            .searchSchema(SchemaRepr.Record(Chunk("name" -> SchemaRepr.Primitive("string"))))
             .field(
               "age"
             )
         val result = json.delete(path)
         assertTrue(
-          result.get("name").toChunk.toVector == Vector(Json.String("Alice")),
+          result.get("name").toChunk == Chunk(Json.String("Alice")),
           result.get("age").isEmpty
         )
       },
@@ -3296,6 +2869,281 @@ object JsonSpec extends SchemaBaseSpec {
         val path   = DynamicOptic.root.search(TypeId.of[String])
         val result = json.delete(path)
         assertTrue(result == json)
+      }
+    ),
+    suite("additional path operation coverage")(
+      test("modifyOrFail on non-array with Elements returns Left") {
+        val json   = Json.Object("a" -> Json.Number(1))
+        val result = json.modifyOrFail(DynamicOptic.elements) { case j => j }
+        assertTrue(result.isLeft)
+      },
+      test("modifyOrFail on non-object with MapValues returns Left") {
+        val json   = Json.Array(Json.Number(1))
+        val result = json.modifyOrFail(DynamicOptic.mapValues) { case j => j }
+        assertTrue(result.isLeft)
+      },
+      test("modifyOrFail with AtIndex on non-array returns Left") {
+        val json   = Json.String("hello")
+        val result = json.modifyOrFail(DynamicOptic.root.at(0)) { case j => j }
+        assertTrue(result.isLeft)
+      },
+      test("modifyOrFail with AtIndex out of bounds returns Left") {
+        val json   = Json.Array(Json.Number(1))
+        val result = json.modifyOrFail(DynamicOptic.root.at(5)) { case j => j }
+        assertTrue(result.isLeft)
+      },
+      test("modifyOrFail propagates error through nested AtIndex") {
+        val json   = Json.Array(Json.Object("x" -> Json.Number(1)))
+        val result = json.modifyOrFail(DynamicOptic.root.at(0).field("missing")) { case j => j }
+        assertTrue(result.isLeft)
+      },
+      test("modifyOrFail with fallthrough node types delegates to non-failing version") {
+        val json   = Json.Object("a" -> Json.Number(1))
+        val result = json.modifyOrFail(DynamicOptic.root.atIndices(0, 1)) { case j => j }
+        assertTrue(result.isLeft)
+      },
+      test("modifyOrFail with MapKeys falls through to non-failing delegate") {
+        val json   = Json.Object("a" -> Json.Number(1))
+        val result = json.modifyOrFail(DynamicOptic.mapKeys) { case j => j }
+        assertTrue(result.isLeft)
+      },
+      test("modify with AtIndex on non-array returns unchanged") {
+        val json   = Json.Object("a" -> Json.Number(1))
+        val result = json.modify(DynamicOptic.root.at(0))(_ => Json.Number(99))
+        assertTrue(result == json)
+      },
+      test("modify with Elements on non-array returns unchanged") {
+        val json   = Json.String("hello")
+        val result = json.modify(DynamicOptic.elements)(_ => Json.Number(99))
+        assertTrue(result == json)
+      },
+      test("modify with MapValues on non-object returns unchanged") {
+        val json   = Json.Array(Json.Number(1))
+        val result = json.modify(DynamicOptic.mapValues)(_ => Json.Number(99))
+        assertTrue(result == json)
+      },
+      test("modify with AtIndices on non-array returns unchanged") {
+        val json   = Json.String("hello")
+        val result = json.modify(DynamicOptic.root.atIndices(0, 1))(_ => Json.Number(99))
+        assertTrue(result == json)
+      },
+      test("modify with AtMapKey non-string key returns unchanged") {
+        val json = Json.Object("a" -> Json.Number(1))
+        val path = new DynamicOptic(
+          Chunk.single(DynamicOptic.Node.AtMapKey(DynamicValue.Primitive(PrimitiveValue.Int(42))))
+        )
+        val result = json.modify(path)(_ => Json.Number(99))
+        assertTrue(result == json)
+      },
+      test("modify with AtMapKey on non-object returns unchanged") {
+        val json   = Json.Array(Json.Number(1))
+        val result = json.modify(DynamicOptic.root.atKey("x")(Schema.string))(_ => Json.Number(99))
+        assertTrue(result == json)
+      },
+      test("modify with AtMapKeys on non-object returns unchanged") {
+        val json   = Json.Array(Json.Number(1))
+        val result = json.modify(DynamicOptic.root.atKeys("a")(Schema.string))(_ => Json.Number(99))
+        assertTrue(result == json)
+      },
+      test("modify with MapKeys returns unchanged") {
+        val json   = Json.Object("a" -> Json.Number(1))
+        val result = json.modify(DynamicOptic.mapKeys)(_ => Json.String("b"))
+        assertTrue(result == json)
+      },
+      test("modify with Elements where inner modification fails returns elements unchanged") {
+        val json   = Json.Array(Json.Object("x" -> Json.Number(1)), Json.Object("y" -> Json.Number(2)))
+        val result = json.modify(DynamicOptic.elements.field("z"))(_ => Json.Number(99))
+        assertTrue(result == json)
+      },
+      test("modify with MapValues where inner modification fails returns values unchanged") {
+        val json   = Json.Object("a" -> Json.Object("x" -> Json.Number(1)))
+        val result = json.modify(DynamicOptic.mapValues.field("missing"))(_ => Json.Number(99))
+        assertTrue(result == json)
+      },
+      test("modify with AtIndices where inner modification partially fails") {
+        val json   = Json.Array(Json.Number(1), Json.Object("x" -> Json.Number(2)), Json.Number(3))
+        val result = json.modify(DynamicOptic.root.atIndices(0, 1).field("x"))(_ => Json.Number(99))
+        assertTrue(result.get(1).get("x").as[BigDecimal] == Right(BigDecimal(99)))
+      },
+      test("modify with AtMapKeys where inner modification partially fails") {
+        val json   = Json.Object("a" -> Json.Object("x" -> Json.Number(1)), "b" -> Json.Number(2))
+        val result =
+          json.modify(DynamicOptic.root.atKeys("a", "b")(Schema.string).field("x"))(_ => Json.Number(99))
+        assertTrue(
+          result.get("a").get("x").as[BigDecimal] == Right(BigDecimal(99)),
+          result.get("b").as[BigDecimal] == Right(BigDecimal(2))
+        )
+      },
+      test("delete with AtIndex on non-array returns unchanged") {
+        val json   = Json.Object("a" -> Json.Number(1))
+        val result = json.delete(DynamicOptic.root.at(0))
+        assertTrue(result == json)
+      },
+      test("delete with AtIndex out of bounds returns unchanged") {
+        val json   = Json.Array(Json.Number(1))
+        val result = json.delete(DynamicOptic.root.at(5))
+        assertTrue(result == json)
+      },
+      test("delete with Elements on non-array returns unchanged") {
+        val json   = Json.String("hello")
+        val result = json.delete(DynamicOptic.elements)
+        assertTrue(result == json)
+      },
+      test("delete with Elements non-last applies recursively through elements") {
+        val json = Json.Array(
+          Json.Object("x" -> Json.Number(1), "y" -> Json.Number(2)),
+          Json.Object("x" -> Json.Number(3), "y" -> Json.Number(4))
+        )
+        val result = json.delete(DynamicOptic.elements.field("x"))
+        assertTrue(
+          result.get(0).get("y").as[BigDecimal] == Right(BigDecimal(2)),
+          result.get(0).get("x").isEmpty,
+          result.get(1).get("y").as[BigDecimal] == Right(BigDecimal(4)),
+          result.get(1).get("x").isEmpty
+        )
+      },
+      test("delete with unsupported node type returns unchanged") {
+        val json   = Json.Object("a" -> Json.Number(1))
+        val result = json.delete(DynamicOptic.mapValues)
+        assertTrue(result == json)
+      },
+      test("delete on root returns unchanged") {
+        val json   = Json.Object("a" -> Json.Number(1))
+        val result = json.delete(DynamicOptic.root)
+        assertTrue(result == json)
+      },
+      test("deleteOrFail with non-existent nested field") {
+        val json   = Json.Object("a" -> Json.Object("b" -> Json.Number(1)))
+        val result = json.deleteOrFail(DynamicOptic.root.field("a").field("missing"))
+        assertTrue(result.isLeft)
+      },
+      test("deleteOrFail on non-object for field returns Left") {
+        val json   = Json.Array(Json.Number(1))
+        val result = json.deleteOrFail(DynamicOptic.root.field("x"))
+        assertTrue(result.isLeft)
+      },
+      test("insert with AtIndex on non-array returns unchanged") {
+        val json   = Json.Object("a" -> Json.Number(1))
+        val result = json.insert(DynamicOptic.root.at(0), Json.Number(1))
+        assertTrue(result == json)
+      },
+      test("insert at negative index returns unchanged") {
+        val json   = Json.Array(Json.Number(1))
+        val result = json.insert(DynamicOptic.root.at(-1), Json.Number(99))
+        assertTrue(result == json)
+      },
+      test("insert with unsupported node type returns unchanged") {
+        val json   = Json.Object("a" -> Json.Number(1))
+        val result = json.insert(DynamicOptic.elements, Json.Number(99))
+        assertTrue(result == json)
+      },
+      test("insert at root returns unchanged") {
+        val json   = Json.Object("a" -> Json.Number(1))
+        val result = json.insert(DynamicOptic.root, Json.Number(99))
+        assertTrue(result == json)
+      },
+      test("insert with nested AtIndex navigates into element") {
+        val json   = Json.Array(Json.Object("items" -> Json.Array(Json.Number(1))))
+        val result = json.insert(DynamicOptic.root.at(0).field("items").at(1), Json.Number(2))
+        val items  = result.get(0).get("items")
+        assertTrue(
+          items.get(DynamicOptic.root.at(0)).as[BigDecimal] == Right(BigDecimal(1)),
+          items.get(DynamicOptic.root.at(1)).as[BigDecimal] == Right(BigDecimal(2))
+        )
+      },
+      test("insert nested field where intermediate field doesn't exist returns unchanged") {
+        val json   = Json.Object("a" -> Json.Number(1))
+        val result = json.insert(DynamicOptic.root.field("b").field("c"), Json.Number(42))
+        assertTrue(result == json)
+      },
+      test("insertOrFail at root returns Left") {
+        val json   = Json.Object("a" -> Json.Number(1))
+        val result = json.insertOrFail(DynamicOptic.root, Json.Number(99))
+        assertTrue(result.isLeft)
+      },
+      test("insertOrFail with AtIndex out of bounds returns Left") {
+        val json   = Json.Array(Json.Number(1))
+        val result = json.insertOrFail(DynamicOptic.root.at(10), Json.Number(99))
+        assertTrue(result.isLeft)
+      },
+      test("insertOrFail with AtIndex on non-array returns Left") {
+        val json   = Json.String("hello")
+        val result = json.insertOrFail(DynamicOptic.root.at(0), Json.Number(99))
+        assertTrue(result.isLeft)
+      },
+      test("insertOrFail with unsupported node type returns Left") {
+        val json   = Json.Object("a" -> Json.Number(1))
+        val result = json.insertOrFail(DynamicOptic.elements, Json.Number(99))
+        assertTrue(result.isLeft)
+      },
+      test("insertOrFail on non-object for field returns Left") {
+        val json   = Json.Array(Json.Number(1))
+        val result = json.insertOrFail(DynamicOptic.root.field("a"), Json.Number(99))
+        assertTrue(result.isLeft)
+      },
+      test("insertOrFail propagates error through nested AtIndex") {
+        val json   = Json.Array(Json.Object("x" -> Json.Number(1)))
+        val result = json.insertOrFail(DynamicOptic.root.at(0).field("x"), Json.Number(99))
+        assertTrue(result.isLeft)
+      },
+      test("insertOrFail with nested AtIndex where parent out of bounds") {
+        val json   = Json.Array(Json.Number(1))
+        val result = json.insertOrFail(DynamicOptic.root.at(5).field("x"), Json.Number(99))
+        assertTrue(result.isLeft)
+      },
+      test("fromKVUnsafe creates nested array with padding") {
+        val result = Json.fromKVUnsafe(
+          Seq(
+            (DynamicOptic.root.at(2), Json.Number(42))
+          )
+        )
+        val isArray      = result.is(JsonType.Array)
+        val firstIsNull  = result.get(0).one == Right(Json.Null)
+        val secondIsNull = result.get(1).one == Right(Json.Null)
+        val thirdIs42    = result.get(2).as[BigDecimal] == Right(BigDecimal(42))
+
+        assertTrue(isArray && firstIsNull && secondIsNull && thirdIs42)
+      },
+      test("fromKVUnsafe with AtIndex into existing array extends with padding") {
+        val result = Json.fromKVUnsafe(
+          Seq(
+            (DynamicOptic.root.at(0), Json.Number(1)),
+            (DynamicOptic.root.at(3), Json.Number(4))
+          )
+        )
+        assertTrue(
+          result.get(0).as[BigDecimal] == Right(BigDecimal(1)),
+          result.get(3).as[BigDecimal] == Right(BigDecimal(4))
+        )
+      },
+      test("fromKVUnsafe with nested field after AtIndex") {
+        val result = Json.fromKVUnsafe(
+          Seq(
+            (DynamicOptic.root.at(0).field("name"), Json.String("Alice"))
+          )
+        )
+        assertTrue(result.get(0).get("name").as[String] == Right("Alice"))
+      },
+      test("fromKVUnsafe with unsupported node type in path") {
+        val result = Json.fromKVUnsafe(
+          Seq(
+            (DynamicOptic.elements, Json.Number(42))
+          )
+        )
+        assertTrue(result == Json.Null)
+      },
+      test("fromKV with overwriting paths succeeds") {
+        val result = Json.fromKV(
+          Seq(
+            (DynamicOptic.root.field("a"), Json.Number(1)),
+            (DynamicOptic.root.field("a").field("nested"), Json.Number(2))
+          )
+        )
+        assertTrue(result.isRight)
+      },
+      test("fromKVUnsafe with single root value") {
+        val result = Json.fromKVUnsafe(Seq((DynamicOptic.root, Json.Number(42))))
+        assertTrue(result == Json.Number(42))
       }
     )
   )

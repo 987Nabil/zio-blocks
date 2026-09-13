@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.http
 
 final case class Status private[http] (code: Int) extends AnyVal {
@@ -52,6 +68,7 @@ object Status {
   val LengthRequired: Status              = Status(411)
   val PreconditionFailed: Status          = Status(412)
   val PayloadTooLarge: Status             = Status(413)
+  val RequestEntityTooLarge: Status       = Status(413)
   val UriTooLong: Status                  = Status(414)
   val UnsupportedMediaType: Status        = Status(415)
   val RangeNotSatisfiable: Status         = Status(416)

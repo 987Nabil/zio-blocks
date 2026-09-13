@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package golem.data
 
 import zio.blocks.chunk.Chunk
@@ -133,9 +149,9 @@ object DataInteropReflectionSpec extends ZIOSpecDefault {
         assertTrue(invokeDynamicToDataValue(listSchema, nonSeq).isLeft) &&
         assertTrue(invokeDynamicToDataValue(mapSchema, nonMap).isLeft)
       },
-      test("dynamicToDataValue rejects non-string map keys") {
-        val mapSchema = Schema[Map[String, Int]]
-        val badMap    =
+      test("dynamicToDataValue supports non-string map keys") {
+        val mapSchema = Schema[Map[Int, Int]]
+        val intMap    =
           DynamicValue.Map(
             Chunk(
               DynamicValue.Primitive(PrimitiveValue.Int(1)) ->
@@ -143,7 +159,11 @@ object DataInteropReflectionSpec extends ZIOSpecDefault {
             )
           )
 
-        assertTrue(invokeDynamicToDataValue(mapSchema, badMap).isLeft)
+        assertTrue(
+          invokeDynamicToDataValue(mapSchema, intMap) == Right(
+            DataValue.MapValue(List((DataValue.IntValue(1), DataValue.IntValue(2))))
+          )
+        )
       },
       test("dynamicToDataValue converts option variants") {
         val optionSchema = Schema[Option[Int]]
@@ -216,7 +236,9 @@ object DataInteropReflectionSpec extends ZIOSpecDefault {
           )
 
         assertTrue(
-          invokeDynamicToDataValue(mapSchema, okMap) == Right(DataValue.MapValue(Map("k" -> DataValue.IntValue(1))))
+          invokeDynamicToDataValue(mapSchema, okMap) == Right(
+            DataValue.MapValue(List((DataValue.StringValue("k"), DataValue.IntValue(1))))
+          )
         )
       },
       test("dynamicToDataValue converts sequences to list/set values") {

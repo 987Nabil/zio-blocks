@@ -1,3 +1,4 @@
+import sbtheader.HeaderPlugin.autoImport.*
 import sbt.Keys.*
 import sbt.{Def, *}
 import sbtbuildinfo.*
@@ -6,9 +7,19 @@ import sbtcrossproject.CrossPlugin.autoImport.*
 import scoverage.ScoverageKeys._
 
 object BuildHelper {
-  val Scala213: String = "2.13.18"
-  val Scala33: String  = "3.3.7" // LTS
-  val Scala3: String   = "3.7.4"
+  val Scala213: String    = "2.13.18"
+  val Scala33: String     = "3.3.7" // LTS
+  val Scala3: String      = "3.8.3"
+  val Scala3Golem: String = "3.8.3" // Golem macros use experimental APIs (Symbol.newClass etc.)
+
+  def removeOptionWithValue(options: Seq[String], option: String): Seq[String] =
+    options
+      .foldLeft((Vector.empty[String], false)) {
+        case ((acc, true), _)                                         => (acc, false)
+        case ((acc, false), currentOption) if currentOption == option => (acc, true)
+        case ((acc, false), currentOption)                            => (acc :+ currentOption, false)
+      }
+      ._1
 
   lazy val isRelease: Boolean = {
     val value = sys.env.contains("CI_RELEASE_MODE")
@@ -181,7 +192,6 @@ object BuildHelper {
           Seq(
             "-release",
             if (minor < 8) "11" else "17",
-            "-rewrite",
             "-no-indent",
             "-explain",
             "-explain-cyclic",
@@ -196,21 +206,39 @@ object BuildHelper {
             "-Wconf:msg=The syntax `.*` is no longer supported for vararg splices; use `.*` instead:s",
             "-Wconf:id=E029:s",                                                      // suppress non-exhaustive pattern match warnings in macro code
             "-Wconf:id=E030:s",                                                      // suppress unreachable case warnings in type pattern matching
+            "-Wconf:id=E198&src=.*SqlMacros.scala:s",                                // quoted $tbl binding triggers false unused on Scala 3.3
             "-Wconf:msg=package scala contains object and package with same name:s", // Scala.js classpath artifact
             "-Werror"
-          ) ++ (if (minor >= 5) Seq("-experimental") else Seq.empty)
+          ) ++ {
+            if (minor >= 8) {
+              Seq(
+                "-experimental",
+                "-opt"
+              )
+            } else Seq.empty
+          }
         case _ =>
           Seq(
             "-release",
             "11",
             "-language:existentials",
             "-opt:l:method",
+            "-Ymacro-annotations",
             "-Ywarn-unused",
             "-Wconf:cat=unused&src=.*/test/.*:s",
             "-Wconf:msg=outer reference.*cannot be checked&src=.*/test/.*:s",
             "-Xfatal-warnings"
           )
       }),
+      // Align javac --release with scalac -release so Java sources (e.g. ByteArrayAccess.java)
+      // produce bytecode compatible with the same JDK target.
+      javacOptions ++= {
+        val javaRelease = CrossVersion.partialVersion(scalaVersion.value) match {
+          case Some((3, minor)) if minor >= 8 => "17"
+          case _                              => "11"
+        }
+        Seq("--release", javaRelease)
+      },
       versionScheme := Some("early-semver"),
       testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
       Test / parallelExecution := true,
@@ -226,26 +254,18 @@ object BuildHelper {
       coverageMinimumStmtTotal   := 95,
       coverageMinimumBranchTotal := 90,
       coverageExcludedFiles      := ".*BuildInfo.*"
-    )
+    ) ++ {
+      // Example projects are embedded verbatim into the documentation via `mdoc:embed`, so they carry
+      // no license header. An empty mapping leaves sbt-header with no file types to process, which
+      // makes both `headerCreate` and `headerCheck` no-ops for these projects.
+      if (prjName.endsWith("-examples")) Seq(headerMappings := Map.empty)
+      else Seq.empty
+    }
 
   def jsSettings: Seq[Def.Setting[?]] = Seq(
-    // Scala.js 3.7.4 compiler fails on virtualfile: URIs during JS builds.
-    scalaVersion := {
-      CrossVersion.partialVersion((ThisBuild / scalaVersion).value) match {
-        case Some((3, _)) => Scala33
-        case _            => (ThisBuild / scalaVersion).value
-      }
-    },
     crossScalaVersions       := crossScalaVersions.value.filterNot(_ == Scala3),
     coverageEnabled          := false,
     Test / parallelExecution := false,
-    Test / fork              := false,
-    // Skip JS projects only when the resolved scalaVersion is 3.7.x
-    // (Scala.js doesn't support 3.7.x due to virtualfile: URI issues).
-    // We check scalaVersion (not ThisBuild / scalaVersion) so that ++ version
-    // switches work correctly — ++ changes the project-level scalaVersion but
-    // not the ThisBuild-level one.
-    Compile / skip := scalaVersion.value.startsWith("3.7"),
-    Test / skip    := scalaVersion.value.startsWith("3.7")
+    Test / fork              := false
   )
 }

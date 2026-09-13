@@ -9,6 +9,7 @@ project/project/target
 .bloop
 cs
 sbt/
+.zio-sbt
 
 # Mill
 out/
@@ -54,4 +55,26 @@ schema/jvm/src/test/resources/json-schema-test-suite/
 # Internal working directories (Sisyphus/OpenCode)
 .sisyphus/
 .opencode/
+.omo/
 .claude/settings.local.json
+
+# Project-specific files to exclude
+.git-rewrite/
+github-data/
+SCOPE_CONSOLIDATION_PLAN.md
+shell.nix
+scope-examples/src/main/scala/scope/examples/MyApp.scala
+
+# Code search indexes
+.ck/
+.ckignore
+.cqs/
+website/docs/*
+website/node_modules/*
+website/build/*
+website/.docusaurus
+*.class
+*.tasty
+.flowrite/
+.docs-audit-state.json
+sweep-*.db

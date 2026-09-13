@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema.avro
 
 import zio.blocks.schema.{Schema, SchemaBaseSpec}
@@ -34,11 +50,11 @@ object AvroFormatVersionSpecificSpec extends SchemaBaseSpec {
         val schema2 = Schema.derived[LinkedList[Option[String]]]
 
         avroSchema[LinkedList[Int]](
-          "[{\"type\":\"record\",\"name\":\"End_1\",\"namespace\":\"zio.blocks.schema.avro.AvroFormatVersionSpecificSpec.LinkedList\",\"fields\":[]},{\"type\":\"record\",\"name\":\"Node\",\"namespace\":\"zio.blocks.schema.avro.AvroFormatVersionSpecificSpec.LinkedList\",\"fields\":[{\"name\":\"value\",\"type\":\"int\"},{\"name\":\"next\",\"type\":[{\"type\":\"record\",\"name\":\"End\",\"fields\":[]},\"Node\"]}]}]"
+          "[{\"type\":\"record\",\"name\":\"End\",\"namespace\":\"zio.blocks.schema.avro.AvroFormatVersionSpecificSpec.LinkedList\",\"fields\":[]},{\"type\":\"record\",\"name\":\"Node\",\"namespace\":\"zio.blocks.schema.avro.AvroFormatVersionSpecificSpec.LinkedList\",\"fields\":[{\"name\":\"value\",\"type\":\"int\"},{\"name\":\"next\",\"type\":[{\"type\":\"record\",\"name\":\"End_1\",\"fields\":[]},\"Node\"]}]}]"
         )(schema1) &&
         roundTrip(Node(1, Node(2, End)), 5)(schema1) &&
         avroSchema[LinkedList[Option[String]]](
-          "[{\"type\":\"record\",\"name\":\"End_1\",\"namespace\":\"zio.blocks.schema.avro.AvroFormatVersionSpecificSpec.LinkedList\",\"fields\":[]},{\"type\":\"record\",\"name\":\"Node\",\"namespace\":\"zio.blocks.schema.avro.AvroFormatVersionSpecificSpec.LinkedList\",\"fields\":[{\"name\":\"value\",\"type\":[{\"type\":\"record\",\"name\":\"None\",\"namespace\":\"scala\",\"fields\":[]},{\"type\":\"record\",\"name\":\"Some\",\"namespace\":\"scala\",\"fields\":[{\"name\":\"value\",\"type\":\"string\"}]}]},{\"name\":\"next\",\"type\":[{\"type\":\"record\",\"name\":\"End\",\"fields\":[]},\"Node\"]}]}]"
+          "[{\"type\":\"record\",\"name\":\"End\",\"namespace\":\"zio.blocks.schema.avro.AvroFormatVersionSpecificSpec.LinkedList\",\"fields\":[]},{\"type\":\"record\",\"name\":\"Node\",\"namespace\":\"zio.blocks.schema.avro.AvroFormatVersionSpecificSpec.LinkedList\",\"fields\":[{\"name\":\"value\",\"type\":[{\"type\":\"record\",\"name\":\"None\",\"namespace\":\"scala\",\"fields\":[]},{\"type\":\"record\",\"name\":\"Some\",\"namespace\":\"scala\",\"fields\":[{\"name\":\"value\",\"type\":\"string\"}]}]},{\"name\":\"next\",\"type\":[{\"type\":\"record\",\"name\":\"End_1\",\"fields\":[]},\"Node\"]}]}]"
         )(schema2) &&
         roundTrip(Node(Some("VVV"), Node(None, End)), 9)(schema2)
       },

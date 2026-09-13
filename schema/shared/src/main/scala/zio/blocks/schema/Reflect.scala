@@ -16,11 +16,11 @@
 
 package zio.blocks.schema
 
-import zio.blocks.chunk.{Chunk, ChunkBuilder}
+import zio.blocks.chunk.{Chunk, ChunkMap}
 import zio.blocks.docs.{Doc, Paragraph, Inline}
 import zio.blocks.schema.binding.RegisterOffset.RegisterOffset
 import zio.blocks.schema.binding._
-import zio.blocks.typeid.{Owner, TypeId, TypeRepr}
+import zio.blocks.typeid.{Owner, TypeId, TypeParam, TypeRepr, Variance}
 import scala.annotation.tailrec
 import scala.collection.immutable.ArraySeq
 import scala.reflect.ClassTag
@@ -174,13 +174,21 @@ sealed trait Reflect[F[_, _], A] extends Reflectable[A] { self =>
     cases.length == 2 && cases(1).name == "Some"
   }
 
+  def isMaybe: Boolean = isVariant && {
+    val tid = typeId
+    tid.isMaybe && {
+      val cases = asVariant.get.cases
+      cases.length == 2 && cases(1).name == "Present"
+    }
+  }
+
   def isEnumeration: Boolean = isVariant && asVariant.get.cases.forall { case_ =>
     val caseReflect = case_.value
     caseReflect.asRecord.exists(_.fields.isEmpty) || caseReflect.isEnumeration
   }
 
   def optionInnerType: Option[Reflect[F, ?]] =
-    if (isOption) asVariant.get.cases(1).value.asRecord.map(_.fields(0).value)
+    if (isOption || isMaybe) asVariant.get.cases(1).value.asRecord.map(_.fields(0).value)
     else None
 
   def modifiers: Seq[Modifier.Reflect]
@@ -191,7 +199,8 @@ sealed trait Reflect[F[_, _], A] extends Reflectable[A] { self =>
 
   def nodeType: Reflect.Type { type NodeBinding = self.NodeBinding }
 
-  lazy val noBinding: Reflect[NoBinding, A] = transform(DynamicOptic.root, ReflectTransformer.noBinding()).force
+  lazy val noBinding: Reflect[NoBinding, A] =
+    Reflect.withTransformCache(transform(DynamicOptic.root, ReflectTransformer.noBinding()).force)
 
   def toDynamicValue(value: A)(implicit F: HasBinding[F]): DynamicValue
 
@@ -379,7 +388,7 @@ object Reflect {
       storedExamples.flatMap(dv => fromDynamicValue(dv).toOption)
 
     def examples(value: A, values: A*)(implicit F: HasBinding[F]): Record[F, A] =
-      copy(storedExamples = (value +: values).map(toDynamicValue))
+      copy(storedExamples = values.prepended(value).map(toDynamicValue))
 
     def binding(implicit F: HasBinding[F]): Binding[BindingType.Record, A] = F.binding(recordBinding)
 
@@ -444,7 +453,7 @@ object Reflect {
 
     def metadata: F[NodeBinding, A] = recordBinding
 
-    def modifier(modifier: Modifier.Reflect): Record[F, A] = copy(modifiers = modifiers :+ modifier)
+    def modifier(modifier: Modifier.Reflect): Record[F, A] = copy(modifiers = modifiers.appended(modifier))
 
     def modifiers(modifiers: Iterable[Modifier.Reflect]): Record[F, A] = copy(modifiers = this.modifiers ++ modifiers)
 
@@ -459,26 +468,23 @@ object Reflect {
     }
 
     def toDynamicValue(value: A)(implicit F: HasBinding[F]): DynamicValue = {
-      val deconstructor = this.deconstructor
-      val registers     = Registers(deconstructor.usedRegisters)
-      deconstructor.deconstruct(registers, 0, value)
-      val len    = this.registers.length
-      val fields = ChunkBuilder.make[(String, DynamicValue)](len)
+      val regs = Registers(deconstructor.usedRegisters)
+      deconstructor.deconstruct(regs, 0, value)
+      val len    = registers.length
+      val result = new Array[(String, DynamicValue)](len)
       var idx    = 0
       while (idx < len) {
-        val field    = this.fields(idx)
-        val register = this.registers(idx)
-        fields.addOne(
-          (
-            field.name,
-            field.value
-              .asInstanceOf[Reflect[F, field.Focus]]
-              .toDynamicValue(register.get(registers, 0).asInstanceOf[field.Focus])
-          )
+        val field    = fields(idx)
+        val register = registers(idx)
+        result(idx) = (
+          field.name,
+          field.value
+            .asInstanceOf[Reflect[F, field.Focus]]
+            .toDynamicValue(register.get(regs, 0).asInstanceOf[field.Focus])
         )
         idx += 1
       }
-      new DynamicValue.Record(fields.result())
+      new DynamicValue.Record(Chunk.fromArray(result))
     }
 
     def transform[G[_, _]](path: DynamicOptic, f: ReflectTransformer[F, G]): Lazy[Record[G, A]] =
@@ -600,7 +606,7 @@ object Reflect {
       storedExamples.flatMap(dv => fromDynamicValue(dv).toOption)
 
     def examples(value: A, values: A*)(implicit F: HasBinding[F]): Variant[F, A] =
-      copy(storedExamples = (value +: values).map(toDynamicValue))
+      copy(storedExamples = values.prepended(value).map(toDynamicValue))
 
     def binding(implicit F: HasBinding[F]): Binding[BindingType.Variant, A] = F.binding(variantBinding)
 
@@ -633,7 +639,7 @@ object Reflect {
 
     def metadata: F[NodeBinding, A] = variantBinding
 
-    def modifier(modifier: Modifier.Reflect): Variant[F, A] = copy(modifiers = modifiers :+ modifier)
+    def modifier(modifier: Modifier.Reflect): Variant[F, A] = copy(modifiers = modifiers.appended(modifier))
 
     def modifiers(modifiers: Iterable[Modifier.Reflect]): Variant[F, A] = copy(modifiers = this.modifiers ++ modifiers)
 
@@ -710,7 +716,7 @@ object Reflect {
       storedExamples.flatMap(dv => fromDynamicValue(dv).toOption)
 
     def examples(value: C[A], values: C[A]*)(implicit F: HasBinding[F]): Sequence[F, A, C] =
-      copy(storedExamples = (value +: values).map(toDynamicValue))
+      copy(storedExamples = values.prepended(value).map(toDynamicValue))
 
     private[schema] def fromDynamicValue(value: DynamicValue, trace: List[DynamicOptic.Node])(implicit
       F: HasBinding[F]
@@ -741,16 +747,21 @@ object Reflect {
 
     def metadata: F[NodeBinding, C[A]] = seqBinding
 
-    def modifier(modifier: Modifier.Reflect): Sequence[F, A, C] = copy(modifiers = modifiers :+ modifier)
+    def modifier(modifier: Modifier.Reflect): Sequence[F, A, C] = copy(modifiers = modifiers.appended(modifier))
 
     def modifiers(modifiers: Iterable[Modifier.Reflect]): Sequence[F, A, C] =
       copy(modifiers = this.modifiers ++ modifiers)
 
     def toDynamicValue(value: C[A])(implicit F: HasBinding[F]): DynamicValue = {
       val iterator = seqDeconstructor.deconstruct(value)
-      val builder  = ChunkBuilder.make[DynamicValue](seqDeconstructor.size(value))
-      while (iterator.hasNext) builder.addOne(element.toDynamicValue(iterator.next()))
-      new DynamicValue.Sequence(builder.result())
+      val len      = seqDeconstructor.size(value)
+      val result   = new Array[DynamicValue](len)
+      var idx      = 0
+      while (idx < len) {
+        result(idx) = element.toDynamicValue(iterator.next())
+        idx += 1
+      }
+      new DynamicValue.Sequence(Chunk.fromArray(result))
     }
 
     def transform[G[_, _]](path: DynamicOptic, f: ReflectTransformer[F, G]): Lazy[Sequence[G, A, C]] =
@@ -824,7 +835,7 @@ object Reflect {
       storedExamples.flatMap(dv => fromDynamicValue(dv).toOption)
 
     def examples(value: M[K, V], values: M[K, V]*)(implicit F: HasBinding[F]): Map[F, K, V, M] =
-      copy(storedExamples = (value +: values).map(toDynamicValue))
+      copy(storedExamples = values.prepended(value).map(toDynamicValue))
 
     private[schema] def fromDynamicValue(value: DynamicValue, trace: List[DynamicOptic.Node])(implicit
       F: HasBinding[F]
@@ -861,7 +872,7 @@ object Reflect {
 
     def metadata: F[NodeBinding, M[K, V]] = mapBinding
 
-    def modifier(modifier: Modifier.Reflect): Map[F, K, V, M] = copy(modifiers = modifiers :+ modifier)
+    def modifier(modifier: Modifier.Reflect): Map[F, K, V, M] = copy(modifiers = modifiers.appended(modifier))
 
     def modifiers(modifiers: Iterable[Modifier.Reflect]): Map[F, K, V, M] =
       copy(modifiers = this.modifiers ++ modifiers)
@@ -869,14 +880,16 @@ object Reflect {
     def toDynamicValue(value: M[K, V])(implicit F: HasBinding[F]): DynamicValue = {
       val deconstructor = mapDeconstructor
       val it            = deconstructor.deconstruct(value)
-      val builder       = ChunkBuilder.make[(DynamicValue, DynamicValue)](deconstructor.size(value))
-      while (it.hasNext) {
+      val len           = deconstructor.size(value)
+      val result        = new Array[(DynamicValue, DynamicValue)](len)
+      var idx           = 0
+      while (idx < len) {
         val next = it.next()
-        builder.addOne(
+        result(idx) =
           (this.key.toDynamicValue(deconstructor.getKey(next)), this.value.toDynamicValue(deconstructor.getValue(next)))
-        )
+        idx += 1
       }
-      new DynamicValue.Map(builder.result())
+      new DynamicValue.Map(Chunk.fromArray(result))
     }
 
     def transform[G[_, _]](path: DynamicOptic, f: ReflectTransformer[F, G]): Lazy[Map[G, K, V, M]] =
@@ -940,7 +953,7 @@ object Reflect {
     def examples(implicit F: HasBinding[F]): Seq[DynamicValue] = storedExamples
 
     def examples(value: DynamicValue, values: DynamicValue*)(implicit F: HasBinding[F]): Dynamic[F] =
-      copy(storedExamples = value +: values)
+      copy(storedExamples = values.prepended(value))
 
     private[schema] def fromDynamicValue(value: DynamicValue, trace: List[DynamicOptic.Node])(implicit
       F: HasBinding[F]
@@ -948,7 +961,7 @@ object Reflect {
 
     def metadata: F[NodeBinding, DynamicValue] = dynamicBinding
 
-    def modifier(modifier: Modifier.Reflect): Dynamic[F] = copy(modifiers = modifiers :+ modifier)
+    def modifier(modifier: Modifier.Reflect): Dynamic[F] = copy(modifiers = modifiers.appended(modifier))
 
     def modifiers(modifiers: Iterable[Modifier.Reflect]): Dynamic[F] = copy(modifiers = this.modifiers ++ modifiers)
 
@@ -1002,7 +1015,7 @@ object Reflect {
       storedExamples.flatMap(dv => primitiveType.fromDynamicValue(dv, Nil).toOption)
 
     def examples(value: A, values: A*)(implicit F: HasBinding[F]): Primitive[F, A] =
-      copy(storedExamples = (value +: values).map(primitiveType.toDynamicValue))
+      copy(storedExamples = values.prepended(value).map(primitiveType.toDynamicValue))
 
     private[schema] def fromDynamicValue(value: DynamicValue, trace: List[DynamicOptic.Node])(implicit
       F: HasBinding[F]
@@ -1010,7 +1023,7 @@ object Reflect {
 
     def metadata: F[NodeBinding, A] = primitiveBinding
 
-    def modifier(modifier: Modifier.Reflect): Primitive[F, A] = copy(modifiers = modifiers :+ modifier)
+    def modifier(modifier: Modifier.Reflect): Primitive[F, A] = copy(modifiers = modifiers.appended(modifier))
 
     def modifiers(modifiers: Iterable[Modifier.Reflect]): Primitive[F, A] =
       copy(modifiers = this.modifiers ++ modifiers)
@@ -1077,7 +1090,7 @@ object Reflect {
       storedExamples.flatMap(dv => fromDynamicValue(dv).toOption)
 
     def examples(value: A, values: A*)(implicit F: HasBinding[F]): Wrapper[F, A, B] =
-      copy(storedExamples = (value +: values).map(toDynamicValue))
+      copy(storedExamples = values.prepended(value).map(toDynamicValue))
 
     private[schema] def fromDynamicValue(value: DynamicValue, trace: List[DynamicOptic.Node])(implicit
       F: HasBinding[F]
@@ -1094,7 +1107,7 @@ object Reflect {
 
     def metadata: F[NodeBinding, A] = wrapperBinding
 
-    def modifier(modifier: Modifier.Reflect): Wrapper[F, A, B] = copy(modifiers = modifiers :+ modifier)
+    def modifier(modifier: Modifier.Reflect): Wrapper[F, A, B] = copy(modifiers = modifiers.appended(modifier))
 
     def modifiers(modifiers: Iterable[Modifier.Reflect]): Wrapper[F, A, B] =
       copy(modifiers = this.modifiers ++ modifiers)
@@ -1168,7 +1181,7 @@ object Reflect {
       else value.examples
 
     def examples(value: A, values: A*)(implicit F: HasBinding[F]): Deferred[F, A] =
-      copy(deferredExamples = ((() => value) +: values.map(v => () => v)))
+      copy(deferredExamples = values.map(v => () => v).prepended(() => value))
 
     private[schema] def fromDynamicValue(value: DynamicValue, trace: List[DynamicOptic.Node])(implicit
       F: HasBinding[F]
@@ -1189,7 +1202,7 @@ object Reflect {
 
     def transform[G[_, _]](path: DynamicOptic, f: ReflectTransformer[F, G]): Lazy[Reflect[G, A]] =
       Lazy {
-        val c      = cache.get
+        val c      = Reflect.transformCache.get
         val key    = new IdentityTuple(this, f)
         val cached = c.get(key)
         if (cached ne null) cached.asInstanceOf[Reflect[G, A]]
@@ -1403,16 +1416,11 @@ object Reflect {
         override def initialValue: java.util.IdentityHashMap[AnyRef, Unit] = new java.util.IdentityHashMap
       }
 
-    private[this] val cache =
-      new ThreadLocal[java.util.HashMap[IdentityTuple, AnyRef]] {
-        override def initialValue: java.util.HashMap[IdentityTuple, AnyRef] = new java.util.HashMap
-      }
-
     def nodeType = value.nodeType
 
     override def toString: String = {
       val v = visited.get
-      if (v.containsKey(this)) s"deferred => ${typeId}"
+      if (v.containsKey(this)) s"deferred => $typeId"
       else {
         v.put(this, ())
         try value.toString
@@ -1421,7 +1429,11 @@ object Reflect {
     }
   }
 
-  private class IdentityTuple(val v1: AnyRef, val v2: AnyRef) {
+  object Deferred {
+    type Bound[A] = Deferred[Binding, A]
+  }
+
+  private[schema] class IdentityTuple(val v1: AnyRef, val v2: AnyRef) {
     override def equals(obj: Any): Boolean = obj match {
       case that: IdentityTuple => (this.v1 eq that.v1) && (this.v2 eq that.v2)
       case _                   => false
@@ -1430,8 +1442,44 @@ object Reflect {
     override def hashCode(): Int = System.identityHashCode(v1) * 31 + System.identityHashCode(v2)
   }
 
-  object Deferred {
-    type Bound[A] = Deferred[Binding, A]
+  // Per-thread memoization map shared across all `Reflect.Deferred` instances during a single
+  // top-level `transform` walk. Used as a cycle-breaker so that recursive schemas terminate
+  // and so that a `Deferred` reached via multiple paths is shared in the result.
+  //
+  // Keeping it scoped (cleared by `withTransformCache` on outermost exit) prevents transformers
+  // and their captured state — e.g. the override maps held by `DerivationBuilder`'s anonymous
+  // `ReflectTransformer` — from being pinned for the lifetime of the thread.
+  private[schema] val transformCache: ThreadLocal[java.util.HashMap[IdentityTuple, AnyRef]] =
+    new ThreadLocal[java.util.HashMap[IdentityTuple, AnyRef]] {
+      override def initialValue: java.util.HashMap[IdentityTuple, AnyRef] = new java.util.HashMap
+    }
+
+  private[this] val transformDepth: ThreadLocal[Integer] =
+    new ThreadLocal[Integer] {
+      override def initialValue: Integer = Integer.valueOf(0)
+    }
+
+  /**
+   * Establishes a scope around a top-level `transform` (or chain of `transform`
+   * calls) so that the per-thread cache used to break cycles is cleared once
+   * the outermost call returns.
+   *
+   * The block must encompass the entire `Lazy.force` chain that triggers the
+   * transformation, not just the construction of the outer `Lazy`, since the
+   * transform recursion happens lazily inside the result `Deferred`s.
+   *
+   * Re-entrant: only the outermost call clears the cache.
+   */
+  private[schema] def withTransformCache[A](thunk: => A): A = {
+    val depth = transformDepth.get.intValue
+    transformDepth.set(Integer.valueOf(depth + 1))
+    try thunk
+    finally {
+      if (depth == 0) {
+        transformDepth.remove()
+        transformCache.remove()
+      } else transformDepth.set(Integer.valueOf(depth))
+    }
   }
 
   def unit[F[_, _]](implicit F: FromBinding[F]): Reflect[F, Unit] = primitive(PrimitiveType.Unit)
@@ -1678,30 +1726,242 @@ object Reflect {
       F.fromBinding(Binding.Variant.option)
     )
 
-  private[this] def left[F[_, _], A, B](element: Reflect[F, A])(implicit F: FromBinding[F]): Record[F, Left[A, B]] = {
+  private[this] def left[F[_, _], A, B](
+    left: Reflect[F, A],
+    right: Reflect[F, B]
+  )(implicit F: FromBinding[F]): Record[F, Left[A, B]] = {
     val typeId = TypeId.applied[Left[A, B]](
-      TypeId.nominal[Left[?, ?]]("Left", Owner.fromPackagePath("scala.util")),
-      TypeRepr.Ref(element.typeId)
+      TypeId.nominal[Left[?, ?]](
+        "Left",
+        Owner.fromPackagePath("scala.util"),
+        List(TypeParam.covariant("A", 0), TypeParam.covariant("B", 1))
+      ),
+      TypeRepr.Ref(left.typeId),
+      TypeRepr.Ref(right.typeId)
     )
-    new Record(Chunk.single(new Term("value", element)), typeId, F.fromBinding(Binding.Record.left))
+    val register = Record.registers(Array[Reflect[F, ?]](left)).head.asInstanceOf[Register[A]]
+    new Record(Chunk.single(new Term("value", left)), typeId, F.fromBinding(Binding.Record.left(register)))
   }
 
-  private[this] def right[F[_, _], A, B](element: Reflect[F, B])(implicit F: FromBinding[F]): Record[F, Right[A, B]] = {
+  private[this] def right[F[_, _], A, B](
+    left: Reflect[F, A],
+    right: Reflect[F, B]
+  )(implicit F: FromBinding[F]): Record[F, Right[A, B]] = {
     val typeId = TypeId.applied[Right[A, B]](
-      TypeId.nominal[Right[?, ?]]("Right", Owner.fromPackagePath("scala.util")),
-      TypeRepr.Ref(element.typeId)
+      TypeId.nominal[Right[?, ?]](
+        "Right",
+        Owner.fromPackagePath("scala.util"),
+        List(TypeParam.covariant("A", 0), TypeParam.covariant("B", 1))
+      ),
+      TypeRepr.Ref(left.typeId),
+      TypeRepr.Ref(right.typeId)
     )
-    new Record(Chunk.single(new Term("value", element)), typeId, F.fromBinding(Binding.Record.right))
+    val register = Record.registers(Array[Reflect[F, ?]](right)).head.asInstanceOf[Register[B]]
+    new Record(Chunk.single(new Term("value", right)), typeId, F.fromBinding(Binding.Record.right(register)))
   }
 
+  /**
+   * Creates an `Either[A, B]` variant using the layouts described by the two
+   * child reflects.
+   *
+   * @param left
+   *   the reflect for left values
+   * @param right
+   *   the reflect for right values
+   * @param F
+   *   the conversion from runtime bindings to metadata
+   * @tparam F
+   *   the metadata type constructor
+   * @tparam A
+   *   the left value type
+   * @tparam B
+   *   the right value type
+   * @return
+   *   a variant reflect whose cases are ordered as `Left`, then `Right`
+   */
   def either[F[_, _], A, B](
-    l: Reflect[F, A],
-    r: Reflect[F, B]
+    left: Reflect[F, A],
+    right: Reflect[F, B]
   )(implicit F: FromBinding[F]): Variant[F, Either[A, B]] =
     new Variant(
-      Chunk(new Term("Left", left[F, A, B](l)), new Term("Right", right[F, A, B](r))),
-      TypeId.applied[Either[A, B]](TypeId.either, TypeRepr.Ref(l.typeId), TypeRepr.Ref(r.typeId)),
+      Chunk(new Term("Left", this.left(left, right)), new Term("Right", this.right(left, right))),
+      TypeId.applied[Either[A, B]](TypeId.either, TypeRepr.Ref(left.typeId), TypeRepr.Ref(right.typeId)),
       F.fromBinding(Binding.Variant.either)
+    )
+
+  private[this] val maybeTypeId: TypeId[Any] =
+    TypeId
+      .nominal[Any]("Maybe", Owner.fromPackagePath("zio.blocks.maybe"), List(TypeParam("A", 0, Variance.Covariant)))
+
+  private[this] val absentTypeId: TypeId[AnyRef] =
+    TypeId.nominal[AnyRef]("Absent", Owner.fromPackagePath("zio.blocks.maybe.Maybe"))
+
+  private[this] def absentRecord[F[_, _]](implicit F: FromBinding[F]): Record[F, AnyRef] =
+    new Record(Chunk.empty, absentTypeId, F.fromBinding(Binding.Record.absent))
+
+  private[this] def presentRecord[F[_, _], A <: AnyRef](
+    element: Reflect[F, A]
+  )(implicit F: FromBinding[F]): Record[F, AnyRef] =
+    new Record(
+      Chunk.single(new Term("value", element)),
+      TypeId.nominal[AnyRef]("Present", Owner.fromPackagePath("zio.blocks.maybe.Maybe")),
+      F.fromBinding(Binding.Record.present)
+    )
+
+  private[this] def presentDoubleRecord[F[_, _]](
+    element: Reflect[F, Double]
+  )(implicit F: FromBinding[F]): Record[F, AnyRef] =
+    new Record(
+      Chunk.single(new Term("value", element)),
+      TypeId.nominal[AnyRef]("Present", Owner.fromPackagePath("zio.blocks.maybe.Maybe")),
+      F.fromBinding(Binding.Record.presentDouble)
+    )
+
+  private[this] def presentLongRecord[F[_, _]](
+    element: Reflect[F, Long]
+  )(implicit F: FromBinding[F]): Record[F, AnyRef] =
+    new Record(
+      Chunk.single(new Term("value", element)),
+      TypeId.nominal[AnyRef]("Present", Owner.fromPackagePath("zio.blocks.maybe.Maybe")),
+      F.fromBinding(Binding.Record.presentLong)
+    )
+
+  private[this] def presentFloatRecord[F[_, _]](
+    element: Reflect[F, Float]
+  )(implicit F: FromBinding[F]): Record[F, AnyRef] =
+    new Record(
+      Chunk.single(new Term("value", element)),
+      TypeId.nominal[AnyRef]("Present", Owner.fromPackagePath("zio.blocks.maybe.Maybe")),
+      F.fromBinding(Binding.Record.presentFloat)
+    )
+
+  private[this] def presentIntRecord[F[_, _]](
+    element: Reflect[F, Int]
+  )(implicit F: FromBinding[F]): Record[F, AnyRef] =
+    new Record(
+      Chunk.single(new Term("value", element)),
+      TypeId.nominal[AnyRef]("Present", Owner.fromPackagePath("zio.blocks.maybe.Maybe")),
+      F.fromBinding(Binding.Record.presentInt)
+    )
+
+  private[this] def presentCharRecord[F[_, _]](
+    element: Reflect[F, Char]
+  )(implicit F: FromBinding[F]): Record[F, AnyRef] =
+    new Record(
+      Chunk.single(new Term("value", element)),
+      TypeId.nominal[AnyRef]("Present", Owner.fromPackagePath("zio.blocks.maybe.Maybe")),
+      F.fromBinding(Binding.Record.presentChar)
+    )
+
+  private[this] def presentShortRecord[F[_, _]](
+    element: Reflect[F, Short]
+  )(implicit F: FromBinding[F]): Record[F, AnyRef] =
+    new Record(
+      Chunk.single(new Term("value", element)),
+      TypeId.nominal[AnyRef]("Present", Owner.fromPackagePath("zio.blocks.maybe.Maybe")),
+      F.fromBinding(Binding.Record.presentShort)
+    )
+
+  private[this] def presentBooleanRecord[F[_, _]](
+    element: Reflect[F, Boolean]
+  )(implicit F: FromBinding[F]): Record[F, AnyRef] =
+    new Record(
+      Chunk.single(new Term("value", element)),
+      TypeId.nominal[AnyRef]("Present", Owner.fromPackagePath("zio.blocks.maybe.Maybe")),
+      F.fromBinding(Binding.Record.presentBoolean)
+    )
+
+  private[this] def presentByteRecord[F[_, _]](
+    element: Reflect[F, Byte]
+  )(implicit F: FromBinding[F]): Record[F, AnyRef] =
+    new Record(
+      Chunk.single(new Term("value", element)),
+      TypeId.nominal[AnyRef]("Present", Owner.fromPackagePath("zio.blocks.maybe.Maybe")),
+      F.fromBinding(Binding.Record.presentByte)
+    )
+
+  private[this] def presentUnitRecord[F[_, _]](
+    element: Reflect[F, Unit]
+  )(implicit F: FromBinding[F]): Record[F, AnyRef] =
+    new Record(
+      Chunk.single(new Term("value", element)),
+      TypeId.nominal[AnyRef]("Present", Owner.fromPackagePath("zio.blocks.maybe.Maybe")),
+      F.fromBinding(Binding.Record.presentUnit)
+    )
+
+  def maybe[F[_, _], A <: AnyRef](element: Reflect[F, A])(implicit F: FromBinding[F]): Variant[F, AnyRef] = {
+    val typeId = TypeId.applied[AnyRef](
+      maybeTypeId,
+      TypeRepr.Ref(element.typeId)
+    )
+    new Variant(
+      Chunk(new Term("Absent", absentRecord), new Term("Present", presentRecord(element))),
+      typeId,
+      F.fromBinding(Binding.Variant.maybe)
+    )
+  }
+
+  def maybeDouble[F[_, _]](element: Reflect[F, Double])(implicit F: FromBinding[F]): Variant[F, AnyRef] =
+    new Variant(
+      Chunk(new Term("Absent", absentRecord), new Term("Present", presentDoubleRecord(element))),
+      TypeId.applied[AnyRef](maybeTypeId, TypeRepr.Ref(element.typeId)),
+      F.fromBinding(Binding.Variant.maybe)
+    )
+
+  def maybeLong[F[_, _]](element: Reflect[F, Long])(implicit F: FromBinding[F]): Variant[F, AnyRef] =
+    new Variant(
+      Chunk(new Term("Absent", absentRecord), new Term("Present", presentLongRecord(element))),
+      TypeId.applied[AnyRef](maybeTypeId, TypeRepr.Ref(element.typeId)),
+      F.fromBinding(Binding.Variant.maybe)
+    )
+
+  def maybeFloat[F[_, _]](element: Reflect[F, Float])(implicit F: FromBinding[F]): Variant[F, AnyRef] =
+    new Variant(
+      Chunk(new Term("Absent", absentRecord), new Term("Present", presentFloatRecord(element))),
+      TypeId.applied[AnyRef](maybeTypeId, TypeRepr.Ref(element.typeId)),
+      F.fromBinding(Binding.Variant.maybe)
+    )
+
+  def maybeInt[F[_, _]](element: Reflect[F, Int])(implicit F: FromBinding[F]): Variant[F, AnyRef] =
+    new Variant(
+      Chunk(new Term("Absent", absentRecord), new Term("Present", presentIntRecord(element))),
+      TypeId.applied[AnyRef](maybeTypeId, TypeRepr.Ref(element.typeId)),
+      F.fromBinding(Binding.Variant.maybe)
+    )
+
+  def maybeChar[F[_, _]](element: Reflect[F, Char])(implicit F: FromBinding[F]): Variant[F, AnyRef] =
+    new Variant(
+      Chunk(new Term("Absent", absentRecord), new Term("Present", presentCharRecord(element))),
+      TypeId.applied[AnyRef](maybeTypeId, TypeRepr.Ref(element.typeId)),
+      F.fromBinding(Binding.Variant.maybe)
+    )
+
+  def maybeShort[F[_, _]](element: Reflect[F, Short])(implicit F: FromBinding[F]): Variant[F, AnyRef] =
+    new Variant(
+      Chunk(new Term("Absent", absentRecord), new Term("Present", presentShortRecord(element))),
+      TypeId.applied[AnyRef](maybeTypeId, TypeRepr.Ref(element.typeId)),
+      F.fromBinding(Binding.Variant.maybe)
+    )
+
+  def maybeBoolean[F[_, _]](element: Reflect[F, Boolean])(implicit F: FromBinding[F]): Variant[F, AnyRef] =
+    new Variant(
+      Chunk(new Term("Absent", absentRecord), new Term("Present", presentBooleanRecord(element))),
+      TypeId.applied[AnyRef](maybeTypeId, TypeRepr.Ref(element.typeId)),
+      F.fromBinding(Binding.Variant.maybe)
+    )
+
+  def maybeByte[F[_, _]](element: Reflect[F, Byte])(implicit F: FromBinding[F]): Variant[F, AnyRef] =
+    new Variant(
+      Chunk(new Term("Absent", absentRecord), new Term("Present", presentByteRecord(element))),
+      TypeId.applied[AnyRef](maybeTypeId, TypeRepr.Ref(element.typeId)),
+      F.fromBinding(Binding.Variant.maybe)
+    )
+
+  def maybeUnit[F[_, _]](element: Reflect[F, Unit])(implicit F: FromBinding[F]): Variant[F, AnyRef] =
+    new Variant(
+      Chunk(new Term("Absent", absentRecord), new Term("Present", presentUnitRecord(element))),
+      TypeId.applied[AnyRef](maybeTypeId, TypeRepr.Ref(element.typeId)),
+      F.fromBinding(Binding.Variant.maybe)
     )
 
   def set[F[_, _], A](element: Reflect[F, A])(implicit F: FromBinding[F]): Sequence[F, A, Set] = {
@@ -1732,6 +1992,13 @@ object Reflect {
   def chunk[F[_, _], A](element: Reflect[F, A])(implicit F: FromBinding[F]): Sequence[F, A, Chunk] = {
     val typeId = TypeId.applied[Chunk[A]](TypeId.chunk, TypeRepr.Ref(element.typeId))
     new Sequence(element, typeId, F.fromBinding(Binding.Seq.chunk))
+  }
+
+  def chunkMap[F[_, _], K, V](key: Reflect[F, K], value: Reflect[F, V])(implicit
+    F: FromBinding[F]
+  ): Map[F, K, V, ChunkMap] = {
+    val typeId = TypeId.applied[ChunkMap[K, V]](TypeId.chunkMap, TypeRepr.Ref(key.typeId), TypeRepr.Ref(value.typeId))
+    new Map(key, value, typeId, F.fromBinding(Binding.Map.chunkMap))
   }
 
   def map[F[_, _], K, V](key: Reflect[F, K], value: Reflect[F, V])(implicit
@@ -1772,9 +2039,52 @@ object Reflect {
   }
 
   private[schema] def unwrapToPrimitiveTypeOption[F[_, _], A](reflect: Reflect[F, A]): Option[PrimitiveType[A]] =
-    if (reflect.isWrapper) {
-      reflect.asWrapperUnknown.get.wrapper.underlyingPrimitiveType.asInstanceOf[Option[PrimitiveType[A]]]
-    } else reflect.asPrimitive.map(_.primitiveType)
+    reflect.asWrapperUnknown match {
+      case Some(unknown) =>
+        val wrapper = unknown.wrapper
+        wrapper.underlyingPrimitiveType.orElse {
+          if (wrapper.typeId.isOpaque)
+            unwrapToPrimitiveTypeOption(wrapper.wrapped).asInstanceOf[Option[PrimitiveType[A]]]
+          else None
+        }.asInstanceOf[Option[PrimitiveType[A]]]
+      case None => reflect.asPrimitive.map(_.primitiveType)
+    }
+
+  private[blocks] def registerOffset[F[_, _], A](reflect: Reflect[F, A]): RegisterOffset.RegisterOffset =
+    unwrapToPrimitiveTypeOption(reflect) match {
+      case Some(primitiveType) =>
+        primitiveType match {
+          case _: PrimitiveType.Unit.type => 0L
+          case _: PrimitiveType.Boolean   => RegisterOffset.incrementBooleansAndBytes(0L)
+          case _: PrimitiveType.Byte      => RegisterOffset.incrementBooleansAndBytes(0L)
+          case _: PrimitiveType.Char      => RegisterOffset.incrementCharsAndShorts(0L)
+          case _: PrimitiveType.Short     => RegisterOffset.incrementCharsAndShorts(0L)
+          case _: PrimitiveType.Float     => RegisterOffset.incrementFloatsAndInts(0L)
+          case _: PrimitiveType.Int       => RegisterOffset.incrementFloatsAndInts(0L)
+          case _: PrimitiveType.Double    => RegisterOffset.incrementDoublesAndLongs(0L)
+          case _: PrimitiveType.Long      => RegisterOffset.incrementDoublesAndLongs(0L)
+          case _                          => RegisterOffset.incrementObjects(0L)
+        }
+      case _ => RegisterOffset.incrementObjects(0L)
+    }
+
+  private[blocks] def typeTag[F[_, _], A](reflect: Reflect[F, A]): Int =
+    unwrapToPrimitiveTypeOption(reflect) match {
+      case Some(primitiveType) =>
+        primitiveType match {
+          case _: PrimitiveType.Unit.type => 9
+          case _: PrimitiveType.Boolean   => 5
+          case _: PrimitiveType.Byte      => 6
+          case _: PrimitiveType.Char      => 7
+          case _: PrimitiveType.Short     => 8
+          case _: PrimitiveType.Float     => 3
+          case _: PrimitiveType.Int       => 1
+          case _: PrimitiveType.Double    => 4
+          case _: PrimitiveType.Long      => 2
+          case _                          => 0
+        }
+      case _ => 0
+    }
 
   private class StringToIntMap(size: Int) {
     private[this] val mask   = (Integer.highestOneBit(size | 1) << 2) - 1
@@ -1822,8 +2132,7 @@ object Reflect {
    */
   private[schema] def typeSearch[F[_, _]](root: Reflect[F, ?], searchTypeId: TypeId[?]): Option[Reflect[F, ?]] = {
     // Thread-local visited set for cycle detection in recursive types
-    val visited = new java.util.IdentityHashMap[AnyRef, Unit]()
-
+    val visited                                               = new java.util.IdentityHashMap[AnyRef, Unit]
     def search(current: Reflect[F, ?]): Option[Reflect[F, ?]] = {
       // Check for cycle - if we've visited this Deferred node, skip it
       current match {
@@ -1832,57 +2141,45 @@ object Reflect {
           visited.put(d, ())
         case _ => ()
       }
-
       try {
         // Check if current type matches the search TypeId
         if (current.typeId == searchTypeId) return Some(current)
-
         // Recurse into children based on node type
         current match {
-          case d: Deferred[F, ?] @unchecked =>
-            search(d.value)
-
-          case r: Record[F, ?] @unchecked =>
+          case d: Deferred[F, ?] @unchecked => search(d.value)
+          case r: Record[F, ?] @unchecked   =>
             // Search through all field types
-            var i = 0
-            while (i < r.fields.length) {
-              val result = search(r.fields(i).value)
+            val fields = r.fields
+            val len    = fields.length
+            var idx    = 0
+            while (idx < len) {
+              val result = search(fields(idx).value)
               if (result.isDefined) return result
-              i += 1
+              idx += 1
             }
             None
-
           case v: Variant[F, ?] @unchecked =>
             // Search through all case payload types
-            var i = 0
-            while (i < v.cases.length) {
-              val result = search(v.cases(i).value)
+            val cases = v.cases
+            val len   = cases.length
+            var idx   = 0
+            while (idx < len) {
+              val result = search(cases(idx).value)
               if (result.isDefined) return result
-              i += 1
+              idx += 1
             }
             None
-
-          case s: Sequence[F, ?, ?] @unchecked =>
-            // Search element type
-            search(s.element)
-
-          case m: Map[F, ?, ?, ?] @unchecked =>
+          case s: Sequence[F, ?, ?] @unchecked => search(s.element) // Search element type
+          case m: Map[F, ?, ?, ?] @unchecked   =>
             // Search key type first, then value type
             val keyResult = search(m.key)
             if (keyResult.isDefined) keyResult
             else search(m.value)
-
-          case w: Wrapper[F, ?, ?] @unchecked =>
-            // Search wrapped type
-            search(w.wrapped)
-
-          case _: Primitive[F, ?] | _: Dynamic[F] =>
-            // Primitives and Dynamic don't have child types to search
-            None
+          case w: Wrapper[F, ?, ?] @unchecked => search(w.wrapped) // Search wrapped type
+          case _                              => None              // Primitives and Dynamic don't have child types to search
         }
       } finally {
-        // Clean up visited set for Deferred nodes
-        current match {
+        current match { // Clean up visited set for Deferred nodes
           case d: Deferred[F, ?] @unchecked => visited.remove(d)
           case _                            => ()
         }
@@ -1906,58 +2203,44 @@ object Reflect {
    */
   private[schema] def schemaSearch[F[_, _]](root: Reflect[F, ?], pattern: SchemaRepr): Option[Reflect[F, ?]] = {
     // Thread-local visited set for cycle detection in recursive types
-    val visited = new java.util.IdentityHashMap[AnyRef, Unit]()
-
+    val visited                                                              = new java.util.IdentityHashMap[AnyRef, Unit]
     def matchesSchemaRepr(reflect: Reflect[F, ?], repr: SchemaRepr): Boolean = repr match {
-      case SchemaRepr.Wildcard => true
-
-      case SchemaRepr.Nominal(name) =>
-        reflect.typeId.name == name
-
-      case SchemaRepr.Primitive(name) =>
+      case SchemaRepr.Wildcard       => true
+      case srn: SchemaRepr.Nominal   => reflect.typeId.name == srn.name
+      case srp: SchemaRepr.Primitive =>
         reflect.asPrimitive match {
-          case Some(p) => primitiveTypeNameMatches(name, p.primitiveType)
-          case None    => false
+          case Some(p) => primitiveTypeNameMatches(srp.name, p.primitiveType)
+          case _       => false
         }
-
-      case SchemaRepr.Record(patternFields) =>
+      case srr: SchemaRepr.Record =>
         reflect.asRecord match {
-          case Some(r) =>
-            // Subset matching: all pattern fields must exist with matching types
-            patternFields.forall { case (patternFieldName, patternFieldType) =>
+          case Some(r) => // Subset matching: all pattern fields must exist with matching types
+            srr.fields.forall { case (patternFieldName, patternFieldType) =>
               r.fieldByName(patternFieldName).exists(field => matchesSchemaRepr(field.value, patternFieldType))
             }
-          case None => false
+          case _ => false
         }
-
-      case SchemaRepr.Variant(patternCases) =>
+      case srv: SchemaRepr.Variant =>
         reflect.asVariant match {
-          case Some(v) =>
-            // All pattern cases must exist with matching payload types
-            patternCases.forall { case (patternCaseName, patternCaseType) =>
+          case Some(v) => // All pattern cases must exist with matching payload types
+            srv.cases.forall { case (patternCaseName, patternCaseType) =>
               v.caseByName(patternCaseName).exists(case_ => matchesSchemaRepr(case_.value, patternCaseType))
             }
-          case None => false
+          case _ => false
         }
-
-      case SchemaRepr.Sequence(elemPattern) =>
+      case srs: SchemaRepr.Sequence =>
         reflect.asSequenceUnknown match {
-          case Some(s) => matchesSchemaRepr(s.sequence.element, elemPattern)
-          case None    => false
+          case Some(s) => matchesSchemaRepr(s.sequence.element, srs.element)
+          case _       => false
         }
-
-      case SchemaRepr.Map(keyPattern, valuePattern) =>
+      case srm: SchemaRepr.Map =>
         reflect.asMapUnknown match {
-          case Some(m) =>
-            matchesSchemaRepr(m.map.key, keyPattern) && matchesSchemaRepr(m.map.value, valuePattern)
-          case None => false
+          case Some(m) => matchesSchemaRepr(m.map.key, srm.key) && matchesSchemaRepr(m.map.value, srm.value)
+          case _       => false
         }
-
-      case SchemaRepr.Optional(innerPattern) =>
+      case sro: SchemaRepr.Optional =>
         // Check if this is an Option type (variant with None/Some cases)
-        if (reflect.isOption) {
-          reflect.optionInnerType.exists(inner => matchesSchemaRepr(inner, innerPattern))
-        } else false
+        reflect.isOption && reflect.optionInnerType.exists(inner => matchesSchemaRepr(inner, sro.inner))
     }
 
     def search(current: Reflect[F, ?]): Option[Reflect[F, ?]] = {
@@ -1968,47 +2251,39 @@ object Reflect {
           visited.put(d, ())
         case _ => ()
       }
-
       try {
         // Check if current type matches the pattern
         if (matchesSchemaRepr(current, pattern)) return Some(current)
-
         // Recurse into children based on node type
         current match {
-          case d: Deferred[F, ?] @unchecked =>
-            search(d.value)
-
-          case r: Record[F, ?] @unchecked =>
-            var i = 0
-            while (i < r.fields.length) {
-              val result = search(r.fields(i).value)
+          case d: Deferred[F, ?] @unchecked => search(d.value)
+          case r: Record[F, ?] @unchecked   =>
+            val fields = r.fields
+            val len    = fields.length
+            var idx    = 0
+            while (idx < len) {
+              val result = search(fields(idx).value)
               if (result.isDefined) return result
-              i += 1
+              idx += 1
             }
             None
-
           case v: Variant[F, ?] @unchecked =>
-            var i = 0
-            while (i < v.cases.length) {
-              val result = search(v.cases(i).value)
+            val cases = v.cases
+            val len   = cases.length
+            var idx   = 0
+            while (idx < len) {
+              val result = search(cases(idx).value)
               if (result.isDefined) return result
-              i += 1
+              idx += 1
             }
             None
-
-          case s: Sequence[F, ?, ?] @unchecked =>
-            search(s.element)
-
-          case m: Map[F, ?, ?, ?] @unchecked =>
+          case s: Sequence[F, ?, ?] @unchecked => search(s.element)
+          case m: Map[F, ?, ?, ?] @unchecked   =>
             val keyResult = search(m.key)
             if (keyResult.isDefined) keyResult
             else search(m.value)
-
-          case w: Wrapper[F, ?, ?] @unchecked =>
-            search(w.wrapped)
-
-          case _: Primitive[F, ?] | _: Dynamic[F] =>
-            None
+          case w: Wrapper[F, ?, ?] @unchecked => search(w.wrapped)
+          case _                              => None
         }
       } finally {
         current match {

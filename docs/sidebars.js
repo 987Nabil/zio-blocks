@@ -6,71 +6,384 @@ const sidebars = {
       collapsed: false,
       link: { type: "doc", id: "index" },
       items: [
-         "reference/schema",
-         "reference/allows",
-         "reference/reflect",
-         "reference/binding",
-         "reference/binding-resolver",
-         "reference/registers",
-         "reference/typeid",
-         "reference/modifier",
-         "reference/dynamic-value",
-         "reference/dynamic-schema",
-         "reference/lazy",
-         "reference/structural-types",
-         "reference/optics",
-         "reference/patch",
-         "reference/schema-expr",
-         "reference/dynamic-optic",
-         "reference/type-class-derivation",
-         "reference/codec",
-         "reference/formats",
-         "path-interpolator",
-         "reference/chunk",
-         "reference/schema-error",
-         "reference/validation",
          {
            type: "category",
-           label: "Schema Evolution",
-           link: { type: "doc", id: "reference/schema-evolution/index" },
+           label: "Schema",
+           link: { type: "doc", id: "reference/schema/index" },
            items: [
-             "reference/schema-evolution/into",
-             "reference/schema-evolution/as",
+             {
+               type: "category",
+               label: "Core Type System",
+               collapsed: false,
+               items: [
+                 "reference/schema/schema",
+                 "reference/schema/reflect",
+                 "reference/schema/binding",
+                 "reference/schema/registers",
+                 "reference/schema/binding-resolver",
+                 "reference/schema/reflect-transformer",
+                 "reference/schema/modifier",
+                 "reference/schema/structural-types",
+               ]
+             },
+             {
+               type: "category",
+               label: "Dynamic Values",
+               collapsed: false,
+               items: [
+                 "reference/schema/dynamic-value",
+                 "reference/schema/dynamic-schema",
+               ]
+             },
+             {
+               type: "category",
+               label: "Reflective Optics",
+               collapsed: false,
+               items: [
+                 "reference/schema/optics",
+                 "reference/schema/dynamic-optic",
+                 "reference/schema/path-interpolator",
+                 "reference/schema/schema-search",
+                 "reference/schema/schema-expr",
+                 "reference/schema/patch",
+               ]
+             },
+             {
+               type: "category",
+               label: "Serialization",
+               collapsed: false,
+               items: [
+                 "reference/schema/type-class-derivation",
+                 "reference/schema/codec",
+                 "reference/schema/format",
+                 "reference/schema/lazy",
+               ]
+             },
+             {
+               type: "category",
+               label: "Built-in Formats and Codecs",
+               link: { type: "doc", id: "reference/schema/built-in-codecs/index" },
+               collapsed: false,
+               items: [
+                 {
+                   type: "category",
+                   label: "JSON Codec",
+                   link: { type: "doc", id: "reference/schema/built-in-codecs/json/index" },
+                   collapsed: false,
+                   items: [
+                     "reference/schema/built-in-codecs/json/json",
+                     "reference/schema/built-in-codecs/json/json-config",
+                     "reference/schema/built-in-codecs/json/json-patch",
+                     "reference/schema/built-in-codecs/json/json-differ",
+                     "reference/schema/built-in-codecs/json/json-selection",
+                     "reference/schema/built-in-codecs/json/json-schema",
+                   ]
+                 },
+                 "reference/schema/built-in-codecs/avro",
+                 "reference/schema/built-in-codecs/bson",
+                 "reference/schema/built-in-codecs/csv",
+                 "reference/schema/built-in-codecs/messagepack",
+                 "reference/schema/built-in-codecs/thrift",
+                 "reference/schema/built-in-codecs/toon",
+                 "reference/schema/built-in-codecs/xml",
+                 "reference/schema/built-in-codecs/yaml",
+               ]
+             },
+             {
+               type: "category",
+               label: "Validation & Errors",
+               collapsed: false,
+               items: [
+                 "reference/schema/validation",
+                 "reference/schema/schema-error",
+                 "reference/schema/allows",
+               ]
+             },
+              {
+                type: "category",
+                label: "Schema Evolution",
+                link: { type: "doc", id: "reference/schema/schema-evolution/index" },
+                items: [
+                  "reference/schema/schema-evolution/into",
+                  "reference/schema/schema-evolution/as",
+                  "reference/schema/migration",
+                ]
+              },
+             "reference/schema/syntax",
            ]
          },
+         "reference/typeid",
          "reference/context",
          {
            type: "category",
            label: "Resource Management & DI",
-           link: { type: "doc", id: "reference/resource-management-di/index" },
+           link: { type: "doc", id: "reference/resource-management/index" },
            items: [
-             "reference/resource-management-di/resource",
-             "reference/resource-management-di/scope",
-             "reference/resource-management-di/wire",
+             "reference/resource-management/scope",
+             "reference/resource-management/resource",
+             "reference/resource-management/wire",
+             "reference/resource-management/unscoped",
+             "reference/resource-management/defer-handle",
+             "reference/resource-management/finalizer",
+             "reference/resource-management/finalization",
+           ]
+          },
+          "reference/combinators",
+          "reference/docs",
+         {
+           type: "category",
+           label: "Config",
+           link: { type: "doc", id: "reference/config/index" },
+           items: [
+             "reference/config/config-source",
+             "reference/config/config-decoder",
+             "reference/config/errors",
+             "reference/config/flags",
+             "reference/config/rollout",
+             "reference/config/formats",
            ]
          },
-         "reference/combinators",
-         "reference/docs",
-         "reference/json",
-         "reference/json-patch",
-         "reference/json-differ",
-         "reference/json-schema",
-         "reference/xml",
-         "reference/syntax",
-         "reference/media-type",
-         "reference/http-model",
-         "ringbuffer",
-      ]
-    },
+          "reference/media-type",
+         {
+           type: "category",
+           label: "Code Generation",
+           link: { type: "doc", id: "reference/codegen/index" },
+           items: [
+             "reference/codegen/scala-file",
+             "reference/codegen/type-definition",
+             "reference/codegen/case-class",
+             "reference/codegen/sealed-trait",
+             "reference/codegen/field",
+             "reference/codegen/type-ref",
+             "reference/codegen/scala-emitter",
+             "reference/codegen/emitter-config",
+             "reference/codegen/examples",
+           ]
+         },
+          {
+            type: "category",
+            label: "ZIO Blocks HTTP Model",
+            link: { type: "doc", id: "reference/http-model/index" },
+            items: [
+              "reference/http-model/model",
+              "reference/http-model/headers",
+              "reference/http-model/server-sent-event",
+              "reference/http-model/schema",
+              "reference/http-model/schema-codecs",
+            ]
+          },
+          {
+            type: "category",
+            label: "ZIO Blocks Endpoint",
+            link: { type: "doc", id: "reference/endpoint/index" },
+            items: [
+              "reference/endpoint/endpoint",
+              "reference/endpoint/bulk-creation",
+              "reference/endpoint/http-codec",
+              "reference/endpoint/route-pattern",
+              "reference/endpoint/path-codec",
+              "reference/endpoint/segment-codec",
+              "reference/endpoint/auth-type",
+              "reference/endpoint/route-tree",
+            ]
+          },
+          "reference/chunk",
+          "reference/maybe",
+          "reference/async",
+          "reference/mux",
+          {
+            type: "category",
+            label: "RingBuffer",
+            link: { type: "doc", id: "reference/ringbuffer/index" },
+            items: [
+              "reference/ringbuffer/spsc",
+              "reference/ringbuffer/spmc",
+              "reference/ringbuffer/mpsc",
+              "reference/ringbuffer/mpmc",
+              "reference/ringbuffer/advanced",
+            ]
+          },
+          "reference/html",
+          "reference/smithy",
+          "reference/openapi",
+          "reference/jwt",
+         {
+            type: "category",
+            label: "Datastar",
+           link: { type: "doc", id: "reference/datastar/index" },
+           items: [
+             "reference/datastar/signals",
+             "reference/datastar/attributes",
+             "reference/datastar/events",
+             "reference/datastar/sse",
+           ]
+         },
+          {
+            type: "category",
+            label: "HTMX",
+            link: { type: "doc", id: "reference/htmx/index" },
+            items: [
+              "reference/htmx/hx-swap",
+              "reference/htmx/hx-trigger",
+              "reference/htmx/hx-target",
+              "reference/htmx/hx-params",
+              "reference/htmx/hx-url-update",
+              "reference/htmx/hx-encoding",
+              "reference/htmx/hx-sync",
+              "reference/htmx/attribute-values",
+              "reference/htmx/response-headers",
+            ]
+          },
+          {
+            type: "category",
+            label: "Streams",
+            link: { type: "doc", id: "reference/streams/index" },
+            items: [
+              "reference/streams/stream",
+              "reference/streams/pipeline",
+              "reference/streams/sink",
+              "reference/streams/reader",
+              "reference/streams/writer",
+              "reference/streams/concurrent-operators",
+              "reference/streams/zero-boxing",
+              "reference/streams/scala-2-compatibility",
+            ]
+          },
+          {
+            type: "category",
+            label: "SQL",
+            link: { type: "doc", id: "reference/sql/index" },
+            items: [
+              {
+                type: "category",
+                label: "Core Types",
+                collapsed: false,
+                items: [
+                  "reference/sql/db-codec",
+                  "reference/sql/frag",
+                  "reference/sql/table",
+                  "reference/sql/repo",
+                  "reference/sql/transactor",
+                  "reference/sql/db-con",
+                  "reference/sql/db-tx",
+                ],
+              },
+              {
+                type: "category",
+                label: "Supporting Types",
+                collapsed: false,
+                items: [
+                  "reference/sql/db-value",
+                  "reference/sql/db-param",
+                  "reference/sql/sql-dialect",
+                  "reference/sql/sql-logger",
+                  "reference/sql/sql-name-mapper",
+                  "reference/sql/table-metadata",
+                  "reference/sql/ddl",
+                  "reference/sql/db-connection",
+                  "reference/sql/db-result-reader",
+                  "reference/sql/db-param-writer",
+                  "reference/sql/db-codec-deriver",
+                  "reference/sql/transactor-zio",
+                ],
+              },
+            ],
+          },
+          "reference/sql-zio",
+          "reference/data-migration",
+          "reference/projection",
+          {
+            type: "category",
+            label: "Telemetry",
+            link: { type: "doc", id: "reference/telemetry/index" },
+            items: [
+              {
+                type: "category",
+                label: "Tracing",
+                link: { type: "doc", id: "reference/telemetry/tracing/index" },
+                collapsed: false,
+                items: [
+                  "reference/telemetry/tracing/tracer-provider",
+                  "reference/telemetry/tracing/tracer",
+                  "reference/telemetry/tracing/span",
+                  "reference/telemetry/tracing/span-context",
+                  "reference/telemetry/tracing/span-data",
+                  "reference/telemetry/tracing/span-builder",
+                  "reference/telemetry/tracing/span-processor",
+                  "reference/telemetry/tracing/sampler",
+                  "reference/telemetry/tracing/span-kind",
+                  "reference/telemetry/tracing/span-status",
+                ]
+              },
+              {
+                type: "category",
+                label: "Logging",
+                link: { type: "doc", id: "reference/telemetry/logging/index" },
+                collapsed: false,
+                items: [
+                  "reference/telemetry/logging/logger-provider",
+                  "reference/telemetry/logging/logger",
+                  "reference/telemetry/logging/log-record",
+                  "reference/telemetry/logging/log-record-processor",
+                  "reference/telemetry/logging/log-formatter",
+                  "reference/telemetry/logging/log-writer",
+                  "reference/telemetry/logging/severity",
+                  "reference/telemetry/logging/log-enrichment",
+                ]
+              },
+              {
+                type: "category",
+                label: "Metrics",
+                link: { type: "doc", id: "reference/telemetry/metrics/index" },
+                collapsed: false,
+                items: [
+                  "reference/telemetry/metrics/meter-provider",
+                  "reference/telemetry/metrics/meter",
+                  "reference/telemetry/metrics/instruments",
+                  "reference/telemetry/metrics/labeled-instruments",
+                  "reference/telemetry/metrics/metric-data",
+                ]
+              },
+              {
+                type: "category",
+                label: "Common Types",
+                link: { type: "doc", id: "reference/telemetry/common/index" },
+                collapsed: false,
+                items: [
+                  "reference/telemetry/common/attributes",
+                  "reference/telemetry/common/attribute-key",
+                  "reference/telemetry/common/any-value",
+                  "reference/telemetry/common/resource",
+                  "reference/telemetry/common/instrumentation-scope",
+                ]
+              },
+              {
+                type: "category",
+                label: "OTLP Export",
+                link: { type: "doc", id: "reference/telemetry/otel/index" },
+                collapsed: false,
+                items: [
+                  "reference/telemetry/otel/custom-exporter",
+                ]
+              },
+            ]
+          },
+        ]
+      },
     {
       type: "category",
       label: "Guides",
       items: [
-        "guides/zio-schema-migration",
-        "guides/query-dsl-reified-optics",
-        "guides/query-dsl-sql",
+        "guides/async-getting-started",
+        "guides/compile-time-resource-safety-with-scope",
+        "guides/getting-started-with-mux",
         "guides/query-dsl-extending",
         "guides/query-dsl-fluent-builder",
+        "guides/query-dsl-reified-optics",
+        "guides/query-dsl-sql",
+        "guides/sql-transactions",
+        "guides/zio-schema-migration",
+        "guides/telemetry-guide",
       ]
     }
   ]

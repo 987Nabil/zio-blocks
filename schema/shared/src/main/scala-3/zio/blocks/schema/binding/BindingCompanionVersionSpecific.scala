@@ -144,12 +144,12 @@ private class BindingCompanionVersionSpecificImpl(using Quotes) {
 
   private def isIterator(tpe: TypeRepr): Boolean = tpe <:< TypeRepr.of[Iterator[?]]
 
-  private case class SmartConstructorInfo(
-    companionRef: Term,
-    applyMethod: Symbol,
-    underlyingType: TypeRepr,
-    errorType: TypeRepr,
-    unwrapFieldName: String
+  private class SmartConstructorInfo(
+    val companionRef: Term,
+    val applyMethod: Symbol,
+    val underlyingType: TypeRepr,
+    val errorType: TypeRepr,
+    val unwrapFieldName: String
   )
 
   private def findSmartConstructor(tpe: TypeRepr): Option[SmartConstructorInfo] = {
@@ -254,7 +254,6 @@ private class BindingCompanionVersionSpecificImpl(using Quotes) {
     else if (tpe <:< TypeRepr.of[Option[?]]) deriveOptionBinding(tpe)
     else if (tpe <:< TypeRepr.of[Left[?, ?]]) deriveLeftBinding(tpe)
     else if (tpe <:< TypeRepr.of[Right[?, ?]]) deriveRightBinding(tpe)
-    else if (tpe <:< TypeRepr.of[Either[?, ?]]) deriveEitherBinding(tpe)
     else if (tpe <:< TypeRepr.of[Map[?, ?]])
       fail(s"Use Binding.of[Map] for map types, not Binding.of[${tpe.show}]")
     else if (tpe <:< TypeRepr.of[Chunk[?]])
@@ -356,13 +355,6 @@ private class BindingCompanionVersionSpecificImpl(using Quotes) {
         else if (dealiasedB <:< charTpe) '{ Binding.Record.rightChar[a] }
         else if (dealiasedB <:< unitTpe) '{ Binding.Record.rightUnit[a] }
         else '{ Binding.Record.right[a, b] }
-    }
-  }
-
-  private def deriveEitherBinding(tpe: TypeRepr)(using Quotes): Expr[Any] = {
-    val args = typeArgs(tpe)
-    (args(0).asType, args(1).asType) match {
-      case ('[a], '[b]) => '{ Binding.Variant.either[a, b] }
     }
   }
 
@@ -970,7 +962,11 @@ private class BindingCompanionVersionSpecificImpl(using Quotes) {
     else RegisterOffset(objects = 1)
   }
 
-  private case class TupleFieldInfo(index: Int, tpe: TypeRepr, usedRegisters: RegisterOffset.RegisterOffset)
+  private class TupleFieldInfo(
+    val index: Int,
+    val tpe: TypeRepr,
+    val usedRegisters: RegisterOffset.RegisterOffset
+  )
 
   private def tupleFieldConstructor(
     in: Expr[Registers],
@@ -1314,7 +1310,12 @@ private class BindingCompanionVersionSpecificImpl(using Quotes) {
       case "object"  => '{ RegisterOffset(objects = 1) }
     }
 
-  private case class StructuralFieldForGen(name: String, memberTpe: TypeRepr, kind: String, index: Int)
+  private class StructuralFieldForGen(
+    val name: String,
+    val memberTpe: TypeRepr,
+    val kind: String,
+    val index: Int
+  )
 
   private def deriveStructuralRecordBindingSimple[A: Type](tpe: TypeRepr): Expr[Any] = {
     if (!Platform.supportsReflection) {
@@ -1556,12 +1557,13 @@ private class BindingCompanionVersionSpecificImpl(using Quotes) {
         if (obj == null) false
         else {
           val cls = obj.getClass
-          var i   = 0
           var ok  = true
-          while (ok && i < names.length) {
-            try { cls.getMethod(names(i)) }
+          val len = names.length
+          var idx = 0
+          while (ok && idx < len) {
+            try { cls.getMethod(names(idx)) }
             catch { case _: NoSuchMethodException => ok = false }
-            i += 1
+            idx += 1
           }
           ok
         }

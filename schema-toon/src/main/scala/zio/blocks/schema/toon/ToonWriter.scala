@@ -17,7 +17,7 @@
 package zio.blocks.schema.toon
 
 import zio.blocks.chunk.Chunk
-import zio.blocks.schema.json.JsonBinaryCodec
+import zio.blocks.schema.json.JsonCodec
 
 import java.io.OutputStream
 import java.nio.charset.StandardCharsets.UTF_8
@@ -95,7 +95,7 @@ final class ToonWriter private (
     java.util.Arrays.copyOf(buf, end)
   }
 
-  def encodeError(msg: String): Nothing = throw new ToonBinaryCodecError(Nil, msg)
+  private[this] def encodeError(msg: String): Nothing = throw new ToonCodecError(Nil, msg)
 
   def writeToTrimmed(out: OutputStream): Unit = {
     var end = count
@@ -110,23 +110,23 @@ final class ToonWriter private (
     else ToonWriter.falseBytes
   }
 
-  def writeInt(x: Int): Unit = writeRaw(JsonBinaryCodec.intCodec.encode(x))
+  def writeInt(x: Int): Unit = writeRaw(JsonCodec.intCodec.encode(x))
 
-  def writeLong(x: Long): Unit = writeRaw(JsonBinaryCodec.longCodec.encode(x))
+  def writeLong(x: Long): Unit = writeRaw(JsonCodec.longCodec.encode(x))
 
   def writeFloat(x: Float): Unit =
     if (x.isNaN || x.isInfinite) writeNull()
     else if (x == 0.0f) writeByte('0')
-    else writeDecimalString(JsonBinaryCodec.floatCodec.encodeToString(x))
+    else writeDecimalString(JsonCodec.floatCodec.encodeToString(x))
 
   def writeDouble(x: Double): Unit =
     if (x.isNaN || x.isInfinite) writeNull()
     else if (x == 0.0 || x == -0.0) writeByte('0')
-    else writeDecimalString(JsonBinaryCodec.doubleCodec.encodeToString(x))
+    else writeDecimalString(JsonCodec.doubleCodec.encodeToString(x))
 
-  def writeBigDecimal(x: BigDecimal): Unit = writeDecimalString(JsonBinaryCodec.bigDecimalCodec.encodeToString(x))
+  def writeBigDecimal(x: BigDecimal): Unit = writeDecimalString(JsonCodec.bigDecimalCodec.encodeToString(x))
 
-  def writeBigInt(x: BigInt): Unit = writeRaw(JsonBinaryCodec.bigIntCodec.encode(x))
+  def writeBigInt(x: BigInt): Unit = writeRaw(JsonCodec.bigIntCodec.encode(x))
 
   def writeChar(c: Char): Unit = writeString(c.toString)
 
@@ -188,8 +188,7 @@ final class ToonWriter private (
     writeByte(':')
   }
 
-  def writeArrayHeaderInline(key: String, length: Int): Unit =
-    writeArrayHeaderInline(key, length, delimiter)
+  def writeArrayHeaderInline(key: String, length: Int): Unit = writeArrayHeaderInline(key, length, delimiter)
 
   def writeArrayHeaderInline(key: String, length: Int, delim: Delimiter): Unit = {
     writeArrayHeader(key, length, null, delim)
@@ -409,9 +408,7 @@ final class ToonWriter private (
     while (i < len) {
       val c = key.charAt(i)
       val a = c | 0x20
-      if (!(a >= 'a' && a <= 'z' || c == '_' || i > 0 && (c >= '0' && c <= '9' || c == '.'))) {
-        return false
-      }
+      if (!(a >= 'a' && a <= 'z' || c == '_' || i > 0 && (c >= '0' && c <= '9' || c == '.'))) return false
       i += 1
     }
     i != 0
@@ -447,9 +444,7 @@ final class ToonWriter private (
             c = s.charAt(i)
             c == '+' || c == '-'
           }
-        ) {
-          i += 1
-        }
+        ) i += 1
         while (
           i < len && {
             c = s.charAt(i)
@@ -491,9 +486,7 @@ object ToonWriter {
     while (i < len) {
       val c = key.charAt(i)
       val a = c | 0x20
-      if (!(a >= 'a' && a <= 'z' || c == '_' || i > 0 && (c >= '0' && c <= '9'))) {
-        return false
-      }
+      if (!(a >= 'a' && a <= 'z' || c == '_' || i > 0 && (c >= '0' && c <= '9'))) return false
       i += 1
     }
     i != 0

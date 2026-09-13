@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package golem.runtime.macros
 
 import golem.data.GolemSchema
@@ -46,7 +62,8 @@ object AgentMacrosImpl {
             prompt = $promptExpr,
             mode = _root_.scala.None,
             input = $inputSchemaExpr,
-            output = $outputSchemaExpr
+            output = $outputSchemaExpr,
+            httpEndpoints = _root_.scala.Nil
           )
         """
     }.toList
@@ -56,7 +73,7 @@ object AgentMacrosImpl {
     val traitModeExpr = optionalTreeExpr(c)(traitMode)
 
     val ctorSchema =
-      constructorSchemaFromAgentInput(c)(tpe)
+      idSchemaFromAgentInput(c)(tpe)
 
     c.Expr[AgentMetadata](q"""
       _root_.golem.runtime.AgentMetadata(
@@ -64,12 +81,13 @@ object AgentMacrosImpl {
         description = $traitDescExpr,
         mode = $traitModeExpr,
         methods = List(..$methods),
-        constructor = $ctorSchema
+        constructor = $ctorSchema,
+        httpMount = _root_.scala.None
       )
     """)
   }
 
-  private def constructorSchemaFromAgentInput(c: blackbox.Context)(tpe: c.universe.Type): c.Tree = {
+  private def idSchemaFromAgentInput(c: blackbox.Context)(tpe: c.universe.Type): c.Tree = {
     import c.universe._
     val baseSymOpt = tpe.baseClasses.find(_.fullName == "golem.BaseAgent")
     val baseArgs   = baseSymOpt.toList.flatMap(sym => tpe.baseType(sym).typeArgs)
@@ -112,7 +130,9 @@ object AgentMacrosImpl {
     q"$schemaInstance.schema"
   }
 
-  private def elementSchemaExpr(c: blackbox.Context)(paramName: String, tpe: c.universe.Type): c.Tree = {
+  private def elementSchemaExpr(
+    c: blackbox.Context
+  )(@annotation.unused paramName: String, tpe: c.universe.Type): c.Tree = {
     import c.universe._
 
     val golemSchemaType = appliedType(typeOf[GolemSchema[_]].typeConstructor, tpe)
@@ -122,16 +142,7 @@ object AgentMacrosImpl {
       c.abort(c.enclosingPosition, s"No implicit GolemSchema available for type $tpe.$schemaHint")
     }
 
-    q"""
-      $schemaInstance.schema match {
-        case _root_.golem.data.StructuredSchema.Tuple(elements) if elements.length == 1 =>
-          elements.head.schema
-        case _root_.golem.data.StructuredSchema.Tuple(_) =>
-          throw new IllegalArgumentException("Parameter " + $paramName + " expands to multiple elements; wrap it in a case class")
-        case _root_.golem.data.StructuredSchema.Multimodal(_) =>
-          throw new IllegalArgumentException("Parameter " + $paramName + " is multimodal; use a single parameter of the multimodal wrapper type")
-      }
-    """
+    q"$schemaInstance.elementSchema"
   }
 
   private def methodOutputSchema(c: blackbox.Context)(method: c.universe.MethodSymbol): c.Tree =

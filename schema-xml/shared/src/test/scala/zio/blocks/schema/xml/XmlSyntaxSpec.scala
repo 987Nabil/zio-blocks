@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema.xml
 
 import zio.blocks.schema.{Schema, SchemaBaseSpec}
@@ -16,7 +32,6 @@ object XmlSyntaxSpec extends SchemaBaseSpec {
         val person   = Person("Alice", 30)
         val xml      = person.toXml
         val isResult = xml.is(XmlType.Element)
-
         assertTrue(isResult)
       }
     ),
@@ -29,12 +44,7 @@ object XmlSyntaxSpec extends SchemaBaseSpec {
 
         val simple = Simple("test")
         val xml    = simple.toXmlString
-
-        assertTrue(
-          xml.contains("<Simple>"),
-          xml.contains("<value>test</value>"),
-          xml.contains("</Simple>")
-        )
+        assertTrue(xml == "<Simple><value>test</value></Simple>")
       },
       test("converts case class to XML string with custom config") {
         case class Item(id: Int)
@@ -44,11 +54,7 @@ object XmlSyntaxSpec extends SchemaBaseSpec {
 
         val item = Item(42)
         val xml  = item.toXmlString(WriterConfig.pretty)
-
-        assertTrue(
-          xml.contains("<Item>"),
-          xml.contains("<id>42</id>")
-        )
+        assertTrue(xml == "<Item>\n  <id>42</id>\n</Item>")
       }
     ),
     suite("toXmlBytes extension")(
@@ -75,7 +81,6 @@ object XmlSyntaxSpec extends SchemaBaseSpec {
         val bytes  = person.toXmlBytes
         val xml    = new String(bytes, "UTF-8")
         val result = xml.fromXml[Person]
-
         assertTrue(result == Right(person))
       },
       test("returns error for invalid XML") {
@@ -85,7 +90,6 @@ object XmlSyntaxSpec extends SchemaBaseSpec {
         }
 
         val result = "invalid xml".fromXml[Person]
-
         assertTrue(result.isLeft)
       }
     ),
@@ -99,7 +103,6 @@ object XmlSyntaxSpec extends SchemaBaseSpec {
         val book   = Book("ZIO Guide", 2024)
         val bytes  = book.toXmlBytes
         val result = bytes.fromXml[Book]
-
         assertTrue(result == Right(book))
       },
       test("round-trip with nested case classes") {
@@ -115,7 +118,6 @@ object XmlSyntaxSpec extends SchemaBaseSpec {
         val person = Person("Charlie", Address("123 Main St", "Springfield"))
         val bytes  = person.toXmlBytes
         val result = bytes.fromXml[Person]
-
         assertTrue(result == Right(person))
       }
     )

@@ -1,8 +1,25 @@
-package zio.http.headers
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
-import zio.test._
+package zio.http
+
+import _root_.zio.test._
 import zio.blocks.chunk.Chunk
 import zio.blocks.mediatype.MediaTypes
+import Header._
 
 object NegotiationHeadersSpec extends ZIOSpecDefault {
   def spec: Spec[TestEnvironment, Any] = suite("NegotiationHeaders")(
@@ -131,6 +148,9 @@ object NegotiationHeadersSpec extends ZIOSpecDefault {
       },
       test("header name") {
         assertTrue(AcceptEncoding.GZip(None).headerName == "accept-encoding")
+      },
+      test("NoPreference convenience value matches wildcard encoding") {
+        assertTrue(AcceptEncoding.NoPreference == AcceptEncoding.Any(None))
       }
     ),
     suite("AcceptLanguage")(
@@ -181,6 +201,9 @@ object NegotiationHeadersSpec extends ZIOSpecDefault {
           parsed.map(_.languages(0).tag) == Right("en-US"),
           parsed.map(_.languages(1).tag) == Right("fr")
         )
+      },
+      test("Any convenience language range uses wildcard tag") {
+        assertTrue(AcceptLanguage.Any == AcceptLanguage.LanguageRange("*"))
       }
     ),
     suite("AcceptRanges")(
@@ -238,6 +261,12 @@ object NegotiationHeadersSpec extends ZIOSpecDefault {
         assertTrue(
           parsed.isRight,
           parsed.map(_.mediaTypes(0).fullType) == Right("application/json")
+        )
+      },
+      test("varargs apply builds multi-media-type patch header") {
+        assertTrue(
+          AcceptPatch(MediaTypes.application.`json`, MediaTypes.text.`plain`) ==
+            AcceptPatch(Chunk(MediaTypes.application.`json`, MediaTypes.text.`plain`))
         )
       }
     )

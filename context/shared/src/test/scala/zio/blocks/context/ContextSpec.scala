@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.context
 
 import zio.test._
@@ -249,6 +265,74 @@ object ContextSpec extends ZIOSpecDefault {
       test("get returns null for missing key") {
         val entries = ContextEntries.empty
         assertTrue(entries.get(implicitly[IsNominalType[Config]].typeIdErased) == null)
+      }
+    ),
+    suite("null safety")(
+      test("add rejects null value with NullPointerException") {
+        val result = try {
+          Context.empty.add[Config](null.asInstanceOf[Config])
+          false
+        } catch {
+          case _: NullPointerException => true
+        }
+        assertTrue(result)
+      },
+      test("fromPairs with duplicate keys uses last-write-wins and correct size") {
+        // Duplicate keys: last value wins, size reflects distinct keys, no infinite loops
+        val key1    = implicitly[IsNominalType[Config]].typeIdErased
+        val entries = ContextEntries.fromPairs(
+          Array(
+            (key1, Config(true)),
+            (key1, Config(false)) // duplicate: this value should win
+          )
+        )
+        val value   = entries.get(key1).asInstanceOf[Config]
+        val missing = entries.get(implicitly[IsNominalType[Service1]].typeIdErased)
+        assertTrue(value == Config(false), entries.size == 1, missing == null)
+      },
+      test("apply rejects null value with NullPointerException") {
+        val result = try {
+          Context(null.asInstanceOf[Config])
+          false
+        } catch {
+          case _: NullPointerException => true
+        }
+        assertTrue(result)
+      },
+      test("multi-arg apply rejects null value with NullPointerException") {
+        val result = try {
+          Context(Service1(1), null.asInstanceOf[Config])
+          false
+        } catch {
+          case _: NullPointerException => true
+        }
+        assertTrue(result)
+      },
+      test("update rejects null transform result with NullPointerException") {
+        val ctx    = Context(Config(true))
+        val result = try {
+          ctx.update[Config](_ => null.asInstanceOf[Config])
+          false
+        } catch {
+          case _: NullPointerException => true
+        }
+        assertTrue(result)
+      },
+      test("buildFromOrdered guarantees empty slots in hash table") {
+        // Build a table where size == capacity would cause infinite loops.
+        // After the fix, buildFromOrdered always leaves at least one empty slot.
+        val key1  = implicitly[IsNominalType[Service1]].typeIdErased
+        val key2  = implicitly[IsNominalType[Service2]].typeIdErased
+        val key3  = implicitly[IsNominalType[Service3]].typeIdErased
+        val pairs = Array[(zio.blocks.typeid.TypeId.Erased, Any)](
+          (key1, Service1(1)),
+          (key2, Service2(2)),
+          (key3, Service3(3))
+        )
+        val entries = ContextEntries.fromPairs(pairs)
+        // Looking up a missing key must terminate
+        val missing = entries.get(implicitly[IsNominalType[Config]].typeIdErased)
+        assertTrue(missing == null, entries.size == 3)
       }
     ),
     suite("Cache")(

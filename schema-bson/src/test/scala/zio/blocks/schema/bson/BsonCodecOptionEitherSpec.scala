@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema.bson
 
 import zio.blocks.schema._
@@ -8,12 +24,12 @@ object BsonCodecOptionEitherSpec extends SchemaBaseSpec {
   // Test data types
   final case class Person(name: String, age: Option[Int])
   object Person {
-    implicit val schema: Schema[Person] = Schema.derived[Person]
+    implicit val schema: Schema[Person] = Schema.derived
   }
 
   final case class Config(host: String, port: Option[Int], ssl: Option[Boolean])
   object Config {
-    implicit val schema: Schema[Config] = Schema.derived[Config]
+    implicit val schema: Schema[Config] = Schema.derived
   }
 
   sealed trait ApiResponse
@@ -21,13 +37,7 @@ object BsonCodecOptionEitherSpec extends SchemaBaseSpec {
     final case class Success(data: String)             extends ApiResponse
     final case class Error(message: String, code: Int) extends ApiResponse
 
-    implicit val schema: Schema[ApiResponse] = Schema.derived[ApiResponse]
-  }
-
-  final case class Result(value: Either[String, Int])
-
-  object Result {
-    implicit val schema: Schema[Result] = Schema.derived[Result]
+    implicit val schema: Schema[ApiResponse] = Schema.derived
   }
 
   def spec = suite("BsonCodecOptionEitherSpec")(
@@ -109,8 +119,10 @@ object BsonCodecOptionEitherSpec extends SchemaBaseSpec {
     ),
     suite("Either encoding/decoding")(
       test("encode/decode Left") {
+        final case class Result(value: Either[String, Int])
+
         val result = Result(Left("error message"))
-        val codec  = BsonSchemaCodec.bsonCodec(Schema[Result])
+        val codec  = BsonSchemaCodec.bsonCodec(Schema.derived[Result])
 
         val encoded = codec.encoder.toBsonValue(result)
         val decoded = codec.decoder.fromBsonValueUnsafe(encoded, Nil, BsonDecoder.BsonDecoderContext.default)
@@ -118,8 +130,10 @@ object BsonCodecOptionEitherSpec extends SchemaBaseSpec {
         assertTrue(decoded == result)
       },
       test("encode/decode Right") {
+        final case class Result(value: Either[String, Int])
+
         val result = Result(Right(42))
-        val codec  = BsonSchemaCodec.bsonCodec(Schema[Result])
+        val codec  = BsonSchemaCodec.bsonCodec(Schema.derived[Result])
 
         val encoded = codec.encoder.toBsonValue(result)
         val decoded = codec.decoder.fromBsonValueUnsafe(encoded, Nil, BsonDecoder.BsonDecoderContext.default)

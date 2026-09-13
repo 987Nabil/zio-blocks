@@ -1,14 +1,29 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.combinators
 
 import zio.test._
-import scala.compiletime.testing.typeCheckErrors
 
 object TypeInferenceSpec extends ZIOSpecDefault {
 
   def spec = suite("Type Inference - Wrong Annotation Strategy")(
     suite("Tuples.combine type inference")(
       test("combine(1, \"a\") infers (Int, String)") {
-        val errors = typeCheckErrors("""
+        val errors = scala.compiletime.testing.typeCheckErrors("""
           import zio.blocks.combinators.Tuples
           val result: String = Tuples.combine(1, "a")
         """)
@@ -18,7 +33,7 @@ object TypeInferenceSpec extends ZIOSpecDefault {
         )
       },
       test("combine((1, \"a\"), true) infers (Int, String, Boolean) with flattening") {
-        val errors = typeCheckErrors("""
+        val errors = scala.compiletime.testing.typeCheckErrors("""
           import zio.blocks.combinators.Tuples
           val result: String = Tuples.combine((1, "a"), true)
         """)
@@ -28,7 +43,7 @@ object TypeInferenceSpec extends ZIOSpecDefault {
         )
       },
       test("combine(((1, \"a\"), true), (3.0, 'x')) infers (Int, String, Boolean, Double, Char) deeply flattened") {
-        val errors = typeCheckErrors("""
+        val errors = scala.compiletime.testing.typeCheckErrors("""
           import zio.blocks.combinators.Tuples
           val result: String = Tuples.combine(((1, "a"), true), (3.0, 'x'))
         """)
@@ -41,7 +56,7 @@ object TypeInferenceSpec extends ZIOSpecDefault {
         )
       },
       test("combine with literal Int and String infers (Int, String)") {
-        val errors = typeCheckErrors("""
+        val errors = scala.compiletime.testing.typeCheckErrors("""
           import zio.blocks.combinators.Tuples
           val result: Boolean = Tuples.combine(42, "hello")
         """)
@@ -51,7 +66,7 @@ object TypeInferenceSpec extends ZIOSpecDefault {
         )
       },
       test("combine with Boolean and Double infers (Boolean, Double)") {
-        val errors = typeCheckErrors("""
+        val errors = scala.compiletime.testing.typeCheckErrors("""
           import zio.blocks.combinators.Tuples
           val result: String = Tuples.combine(true, 3.14)
         """)
@@ -63,7 +78,7 @@ object TypeInferenceSpec extends ZIOSpecDefault {
     ),
     suite("Tuples.separate type inference")(
       test("separate via typeclass instance infers correct types") {
-        val errors = typeCheckErrors("""
+        val errors = scala.compiletime.testing.typeCheckErrors("""
           import zio.blocks.combinators.Tuples
           val t = summon[Tuples.Tuples[Int, String]]
           val result: Boolean = t.separate((1, "a"))
@@ -76,7 +91,7 @@ object TypeInferenceSpec extends ZIOSpecDefault {
     ),
     suite("Eithers.combine type inference")(
       test("combine on atomic Either[Int, String] infers Either type") {
-        val errors = typeCheckErrors("""
+        val errors = scala.compiletime.testing.typeCheckErrors("""
           import zio.blocks.combinators.Eithers
           val result: String = Eithers.combine(Left(42): Either[Int, String])
         """)
@@ -86,7 +101,7 @@ object TypeInferenceSpec extends ZIOSpecDefault {
         )
       },
       test("combine on Right(Right(true)): Either[Int, Either[String, Boolean]] infers Either type") {
-        val errors = typeCheckErrors("""
+        val errors = scala.compiletime.testing.typeCheckErrors("""
           import zio.blocks.combinators.Eithers
           val result: String = Eithers.combine(Right(Right(true)): Either[Int, Either[String, Boolean]])
         """)
@@ -96,7 +111,7 @@ object TypeInferenceSpec extends ZIOSpecDefault {
         )
       },
       test("combine on Right(Left(\"mid\")): Either[Int, Either[String, Boolean]] infers Either type") {
-        val errors = typeCheckErrors("""
+        val errors = scala.compiletime.testing.typeCheckErrors("""
           import zio.blocks.combinators.Eithers
           val result: String = Eithers.combine(Right(Left("mid")): Either[Int, Either[String, Boolean]])
         """)
@@ -106,7 +121,7 @@ object TypeInferenceSpec extends ZIOSpecDefault {
         )
       },
       test("combine on Left(42): Either[Int, Either[String, Boolean]] infers Either type") {
-        val errors = typeCheckErrors("""
+        val errors = scala.compiletime.testing.typeCheckErrors("""
           import zio.blocks.combinators.Eithers
           val result: String = Eithers.combine(Left(42): Either[Int, Either[String, Boolean]])
         """)
@@ -116,7 +131,7 @@ object TypeInferenceSpec extends ZIOSpecDefault {
         )
       },
       test("combine on deeply nested Either infers Either type") {
-        val errors = typeCheckErrors("""
+        val errors = scala.compiletime.testing.typeCheckErrors("""
           import zio.blocks.combinators.Eithers
           val result: String = Eithers.combine(Right(Right(Right(3.14))): Either[Int, Either[String, Either[Boolean, Double]]])
         """)
@@ -128,7 +143,7 @@ object TypeInferenceSpec extends ZIOSpecDefault {
     ),
     suite("Eithers.separate type inference")(
       test("separate via typeclass instance returns Either type") {
-        val errors = typeCheckErrors("""
+        val errors = scala.compiletime.testing.typeCheckErrors("""
           import zio.blocks.combinators.Eithers
           val e = summon[Eithers.Eithers[Int, String]]
           val result: String = e.separate(Left(42): Either[Int, String])
@@ -141,7 +156,7 @@ object TypeInferenceSpec extends ZIOSpecDefault {
     ),
     suite("Unions.combine type inference")(
       test("combine(Left(42): Either[Int, String]) infers union with Int and String") {
-        val errors = typeCheckErrors("""
+        val errors = scala.compiletime.testing.typeCheckErrors("""
           import zio.blocks.combinators.Unions
           val result: String = Unions.combine(Left(42): Either[Int, String])
         """)
@@ -151,7 +166,7 @@ object TypeInferenceSpec extends ZIOSpecDefault {
         )
       },
       test("combine(Right(\"hello\"): Either[Int, String]) infers union with Int and String") {
-        val errors = typeCheckErrors("""
+        val errors = scala.compiletime.testing.typeCheckErrors("""
           import zio.blocks.combinators.Unions
           val result: String = Unions.combine(Right("hello"): Either[Int, String])
         """)
@@ -161,7 +176,7 @@ object TypeInferenceSpec extends ZIOSpecDefault {
         )
       },
       test("combine with Boolean | Double infers union type") {
-        val errors = typeCheckErrors("""
+        val errors = scala.compiletime.testing.typeCheckErrors("""
           import zio.blocks.combinators.Unions
           val result: String = Unions.combine(Left(true): Either[Boolean, Double])
         """)
@@ -173,7 +188,7 @@ object TypeInferenceSpec extends ZIOSpecDefault {
     ),
     suite("Unions.separate type inference")(
       test("separate(Int | String) with explicit instance infers Either type") {
-        val errors = typeCheckErrors("""
+        val errors = scala.compiletime.testing.typeCheckErrors("""
           import zio.blocks.combinators.Unions
           val u = summon[Unions.Unions.WithOut[Int, String, Int | String]]
           val result: String = u.separate(42: (Int | String))
@@ -184,7 +199,7 @@ object TypeInferenceSpec extends ZIOSpecDefault {
         )
       },
       test("separate preserves union structure in Either type") {
-        val errors = typeCheckErrors("""
+        val errors = scala.compiletime.testing.typeCheckErrors("""
           import zio.blocks.combinators.Unions
           val u = summon[Unions.Unions.WithOut[Int, String, Int | String]]
           val result: String = u.separate("hello": (Int | String))
@@ -197,7 +212,7 @@ object TypeInferenceSpec extends ZIOSpecDefault {
     ),
     suite("Generic functions with type inference")(
       test("generic function using Tuples.Tuples shows type inference") {
-        val errors = typeCheckErrors("""
+        val errors = scala.compiletime.testing.typeCheckErrors("""
           import zio.blocks.combinators.Tuples
           def combine_values[L, R](l: L, r: R)(using c: Tuples.Tuples[L, R]): String = Tuples.combine(l, r)
           combine_values(1, "a")
@@ -208,7 +223,7 @@ object TypeInferenceSpec extends ZIOSpecDefault {
         )
       },
       test("generic function using Eithers.Eithers shows type inference") {
-        val errors = typeCheckErrors("""
+        val errors = scala.compiletime.testing.typeCheckErrors("""
           import zio.blocks.combinators.Eithers
           def canonicalize[L, R](e: Either[L, R])(using c: Eithers.Eithers[L, R]): String = Eithers.combine(e)
           canonicalize(Right(Right(true)): Either[Int, Either[String, Boolean]])
@@ -219,7 +234,7 @@ object TypeInferenceSpec extends ZIOSpecDefault {
         )
       },
       test("generic function using Unions.Unions shows type inference") {
-        val errors = typeCheckErrors("""
+        val errors = scala.compiletime.testing.typeCheckErrors("""
           import zio.blocks.combinators.Unions
           def to_union[L, R](e: Either[L, R])(using c: Unions.Unions[L, R]): String = Unions.combine(e)
           to_union(Left(42): Either[Int, String])
@@ -231,8 +246,17 @@ object TypeInferenceSpec extends ZIOSpecDefault {
       }
     ),
     suite("Edge cases and complex scenarios")(
+      test("Concat handles Nothing edge cases without ambiguity") {
+        val errors = scala.compiletime.testing.typeCheckErrors("""
+          import zio.blocks.combinators.Concat
+          val c1 = summon[Concat.WithOut[Nothing, Int, Int]]
+          val c2 = summon[Concat.WithOut[String, Nothing, String]]
+          val c3 = summon[Concat.WithOut[Nothing, Nothing, Nothing]]
+        """)
+        assertTrue(errors.isEmpty)
+      },
       test("chained tuple combines maintain correct inference") {
-        val errors = typeCheckErrors("""
+        val errors = scala.compiletime.testing.typeCheckErrors("""
           import zio.blocks.combinators.Tuples
           val step1: (Int, String) = Tuples.combine(1, "a")
           val result: Boolean = Tuples.combine(step1, true)
@@ -243,7 +267,7 @@ object TypeInferenceSpec extends ZIOSpecDefault {
         )
       },
       test("roundtrip combine/separate preserves type relationship") {
-        val errors = typeCheckErrors("""
+        val errors = scala.compiletime.testing.typeCheckErrors("""
           import zio.blocks.combinators.Tuples
           val combined: String = Tuples.combine(1, "a")
           val t = summon[Tuples.Tuples[Int, String]]
@@ -255,7 +279,7 @@ object TypeInferenceSpec extends ZIOSpecDefault {
         )
       },
       test("inference with method result types") {
-        val errors = typeCheckErrors("""
+        val errors = scala.compiletime.testing.typeCheckErrors("""
           import zio.blocks.combinators.Tuples
           def getInt: Int = 42
           def getString: String = "hello"
@@ -267,7 +291,7 @@ object TypeInferenceSpec extends ZIOSpecDefault {
         )
       },
       test("deeply nested Either canonicalization inference") {
-        val errors = typeCheckErrors("""
+        val errors = scala.compiletime.testing.typeCheckErrors("""
           import zio.blocks.combinators.Eithers
           val deep: Either[Int, Either[String, Either[Boolean, Double]]] = Right(Right(Right(3.14)))
           val result: String = Eithers.combine(deep)
@@ -278,7 +302,7 @@ object TypeInferenceSpec extends ZIOSpecDefault {
         )
       },
       test("union type inference with Either source") {
-        val errors = typeCheckErrors("""
+        val errors = scala.compiletime.testing.typeCheckErrors("""
           import zio.blocks.combinators.Unions
           val result: String = Unions.combine(Left(42): Either[Int, Either[String, Boolean]])
         """)
@@ -288,7 +312,7 @@ object TypeInferenceSpec extends ZIOSpecDefault {
         )
       },
       test("tuple inference with method calls") {
-        val errors = typeCheckErrors("""
+        val errors = scala.compiletime.testing.typeCheckErrors("""
           import zio.blocks.combinators.Tuples
           def getInt: Int = 42
           def getString: String = "hello"
@@ -300,7 +324,7 @@ object TypeInferenceSpec extends ZIOSpecDefault {
         )
       },
       test("Eithers inference maintains Either structure in nested case") {
-        val errors = typeCheckErrors("""
+        val errors = scala.compiletime.testing.typeCheckErrors("""
           import zio.blocks.combinators.Eithers
           val nested: Either[Int, Either[String, Boolean]] = Right(Left("test"))
           val result: String = Eithers.combine(nested)
@@ -311,7 +335,7 @@ object TypeInferenceSpec extends ZIOSpecDefault {
         )
       },
       test("Tuples.Tuples infers correct types for mixed tuple inputs") {
-        val errors = typeCheckErrors("""
+        val errors = scala.compiletime.testing.typeCheckErrors("""
           import zio.blocks.combinators.Tuples
           val left: (Int, String) = (1, "a")
           val right: (Boolean, Double) = (true, 3.14)

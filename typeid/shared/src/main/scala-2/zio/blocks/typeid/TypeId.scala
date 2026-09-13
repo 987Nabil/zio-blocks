@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.typeid
 
 import scala.language.experimental.macros
@@ -124,6 +140,10 @@ sealed trait TypeId[A] extends TypeIdPlatformSpecific {
     norm.owner == Owner.fromPackagePath("scala") && norm.name == "Option"
   }
 
+  final def isMaybe: Boolean =
+    (owner == Owner.fromPackagePath("zio.blocks.maybe") ||
+      owner == Owner.fromPackagePath("zio.blocks.maybe.package")) && name == "Maybe"
+
   def isSubtypeOf(other: TypeId[_]): Boolean = {
     if (TypeId.structurallyEqual(this, other)) return true
 
@@ -143,6 +163,8 @@ sealed trait TypeId[A] extends TypeIdPlatformSpecific {
   def isEquivalentTo(other: TypeId[_]): Boolean =
     this.isSubtypeOf(other) && other.isSubtypeOf(this)
 
+  // equals and hashCode are overridden in TypeId.Impl with cached hash for performance.
+  // The sealed trait delegates to structurallyEqual/structuralHash as the default.
   override def equals(other: Any): Boolean = other match {
     case that: TypeId[_] => TypeId.structurallyEqual(this, that)
     case _               => false
@@ -159,17 +181,27 @@ trait TypeIdLowPriority {
 
 object TypeId extends TypeIdInstances with TypeIdLowPriority {
 
-  private[typeid] final case class Impl[A](
-    name: String,
-    owner: Owner,
-    typeParams: List[TypeParam],
-    typeArgs: List[TypeRepr],
-    defKind: TypeDefKind,
-    selfType: Option[TypeRepr],
-    aliasedTo: Option[TypeRepr],
-    representation: Option[TypeRepr],
-    annotations: List[Annotation]
-  ) extends TypeId[A]
+  private[typeid] final class Impl[A](
+    val name: String,
+    val owner: Owner,
+    val typeParams: List[TypeParam],
+    val typeArgs: List[TypeRepr],
+    val defKind: TypeDefKind,
+    val selfType: Option[TypeRepr],
+    val aliasedTo: Option[TypeRepr],
+    val representation: Option[TypeRepr],
+    val annotations: List[Annotation]
+  ) extends TypeId[A] {
+    private val cachedHash: Int = TypeIdOps.structuralHash(this)
+
+    override def hashCode(): Int = cachedHash
+
+    override def equals(other: Any): Boolean = other match {
+      case that: TypeId[_] =>
+        (this eq that) || (this.cachedHash == that.hashCode() && TypeId.structurallyEqual(this, that))
+      case _ => false
+    }
+  }
 
   private[blocks] def makeImpl[A](
     name: String,
@@ -181,13 +213,14 @@ object TypeId extends TypeIdInstances with TypeIdLowPriority {
     aliasedTo: Option[TypeRepr],
     representation: Option[TypeRepr],
     annotations: List[Annotation]
-  ): TypeId[A] = Impl[A](name, owner, typeParams, typeArgs, defKind, selfType, aliasedTo, representation, annotations)
+  ): TypeId[A] =
+    new Impl[A](name, owner, typeParams, typeArgs, defKind, selfType, aliasedTo, representation, annotations)
 
   def nominal[A](
     name: String,
     owner: Owner,
     kind: TypeDefKind
-  ): TypeId[A] = Impl[A](name, owner, Nil, Nil, kind, None, None, None, Nil)
+  ): TypeId[A] = new Impl[A](name, owner, Nil, Nil, kind, None, None, None, Nil)
 
   def nominal[A](
     name: String,
@@ -197,7 +230,7 @@ object TypeId extends TypeIdInstances with TypeIdLowPriority {
     defKind: TypeDefKind = TypeDefKind.Unknown,
     selfType: Option[TypeRepr] = None,
     annotations: List[Annotation] = Nil
-  ): TypeId[A] = Impl[A](
+  ): TypeId[A] = new Impl[A](
     name,
     owner,
     typeParams,
@@ -216,7 +249,7 @@ object TypeId extends TypeIdInstances with TypeIdLowPriority {
     aliased: TypeRepr,
     typeArgs: List[TypeRepr] = Nil,
     annotations: List[Annotation] = Nil
-  ): TypeId[A] = Impl[A](
+  ): TypeId[A] = new Impl[A](
     name,
     owner,
     typeParams,
@@ -236,7 +269,7 @@ object TypeId extends TypeIdInstances with TypeIdLowPriority {
     typeArgs: List[TypeRepr] = Nil,
     publicBounds: TypeBounds = TypeBounds.Unbounded,
     annotations: List[Annotation] = Nil
-  ): TypeId[A] = Impl[A](
+  ): TypeId[A] = new Impl[A](
     name,
     owner,
     typeParams,
@@ -255,7 +288,7 @@ object TypeId extends TypeIdInstances with TypeIdLowPriority {
   def applied[A](
     typeConstructor: TypeId[_],
     args: TypeRepr*
-  ): TypeId[A] = Impl[A](
+  ): TypeId[A] = new Impl[A](
     typeConstructor.name,
     typeConstructor.owner,
     typeConstructor.typeParams,

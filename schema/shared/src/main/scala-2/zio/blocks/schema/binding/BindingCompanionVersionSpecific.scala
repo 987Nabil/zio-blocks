@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema.binding
 
 import zio.blocks.schema.CommonMacroOps
@@ -13,7 +29,7 @@ trait BindingCompanionVersionSpecific {
    *   - Primitive types (Int, String, Boolean, etc.)
    *   - Case classes (derives [[Binding.Record]])
    *   - Sealed traits/enums (derives [[Binding.Variant]])
-   *   - Option, Either, and their subtypes
+   *   - Option, and their subtypes
    *   - [[zio.blocks.schema.DynamicValue]]
    *
    * For sequence types (List, Vector, etc.) and map types, use the overloads
@@ -217,12 +233,12 @@ private class BindingMacroImpl[C <: blackbox.Context](val c: C) {
     else if (isTypeRef(tpe)) typeRefDealias(tpe)
     else tpe
 
-  private case class SmartConstructorInfo(
-    companionSymbol: Symbol,
-    applyMethod: MethodSymbol,
-    underlyingType: Type,
-    errorType: Type,
-    unwrapFieldName: TermName
+  private class SmartConstructorInfo(
+    val companionSymbol: Symbol,
+    val applyMethod: MethodSymbol,
+    val underlyingType: Type,
+    val errorType: Type,
+    val unwrapFieldName: TermName
   )
 
   private def findSmartConstructor(tpe: Type): Option[SmartConstructorInfo] = {
@@ -241,7 +257,6 @@ private class BindingMacroImpl[C <: blackbox.Context](val c: C) {
     val companion      = cls.companion
     if (companion == NoSymbol) return None
     val applyMethods = companion.typeSignature.decls.filter(_.name.decodedName.toString == "apply")
-    val eitherTpe    = typeOf[Either[_, _]].typeConstructor
     applyMethods.find { method =>
       if (!method.isMethod) false
       else {
@@ -269,8 +284,8 @@ private class BindingMacroImpl[C <: blackbox.Context](val c: C) {
           case TypeRef(_, _, List(errTpe, _)) => errTpe.dealias
           case _                              => return None
         }
-        Some(
-          SmartConstructorInfo(
+        new Some(
+          new SmartConstructorInfo(
             companion,
             m,
             underlyingType,
@@ -278,7 +293,7 @@ private class BindingMacroImpl[C <: blackbox.Context](val c: C) {
             fieldName
           )
         )
-      case None => None
+      case _ => None
     }
   }
 
@@ -337,7 +352,6 @@ private class BindingMacroImpl[C <: blackbox.Context](val c: C) {
     else if (tpe.typeConstructor =:= optionTpe) deriveOptionBinding(tpe)
     else if (tpe.typeConstructor =:= leftTpe) deriveLeftBinding(tpe)
     else if (tpe.typeConstructor =:= rightTpe) deriveRightBinding(tpe)
-    else if (tpe.typeConstructor =:= eitherTpe) deriveEitherBinding(tpe)
     else if (tpe.typeConstructor =:= mapTpe)
       fail(s"Use Binding.of[Map] for map types, not Binding.of[$tpe]")
     else if (tpe.typeConstructor =:= chunkTpe)
@@ -425,11 +439,6 @@ private class BindingMacroImpl[C <: blackbox.Context](val c: C) {
     else if (dealiasedB <:< charTpe) c.Expr[Any](q"_root_.zio.blocks.schema.binding.Binding.Record.rightChar[$aTpe]")
     else if (dealiasedB <:< unitTpe) c.Expr[Any](q"_root_.zio.blocks.schema.binding.Binding.Record.rightUnit[$aTpe]")
     else c.Expr[Any](q"_root_.zio.blocks.schema.binding.Binding.Record.right[$aTpe, $bTpe]")
-  }
-
-  private def deriveEitherBinding(tpe: Type): c.Expr[Any] = {
-    val args = typeArgs(tpe)
-    c.Expr[Any](q"_root_.zio.blocks.schema.binding.Binding.Variant.either[${args(0)}, ${args(1)}]")
   }
 
   private def deriveEnumOrModuleValueBinding(tpe: Type): c.Expr[Any] = {

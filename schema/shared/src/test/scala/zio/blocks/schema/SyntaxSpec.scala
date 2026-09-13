@@ -1,7 +1,23 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema
 
 import zio.test._
-import zio.blocks.schema.json.{Json, JsonDecoder}
+import zio.blocks.schema.json.Json
 import zio.blocks.schema.patch.Patch
 
 object SyntaxSpec extends SchemaBaseSpec {
@@ -14,6 +30,11 @@ object SyntaxSpec extends SchemaBaseSpec {
   case class Address(street: String, city: String)
   object Address {
     implicit val schema: Schema[Address] = Schema.derived
+  }
+
+  case class JsonField(a: Int, b: String, c: Json)
+  object JsonField {
+    implicit val schema: Schema[JsonField] = Schema.derived
   }
 
   override def spec: Spec[TestEnvironment, Any] = suite("SyntaxSpec")(
@@ -64,6 +85,16 @@ object SyntaxSpec extends SchemaBaseSpec {
           json.get("street").as[String] == Right("456 Oak Ave"),
           json.get("city").as[String] == Right("Metropolis")
         )
+      },
+      test("embeds Json fields without structural ADT tags") {
+        val value = JsonField(2, "test", Json.Object("f" -> Json.Number(36)))
+        assertTrue(
+          value.toJson == Json.Object(
+            "a" -> Json.Number(2),
+            "b" -> Json.String("test"),
+            "c" -> Json.Object("f" -> Json.Number(36))
+          )
+        )
       }
     ),
     suite("toJsonString")(
@@ -81,6 +112,14 @@ object SyntaxSpec extends SchemaBaseSpec {
         val p      = Person("Eve", 35)
         val result = p.toJsonString
         assertTrue(Json.parse(result).isRight)
+      },
+      test("round-trips embedded Json fields in their native representation") {
+        val value   = JsonField(2, "test", Json.Object("f" -> Json.Number(36)))
+        val encoded = value.toJsonString
+        assertTrue(
+          encoded == """{"a":2,"b":"test","c":{"f":36}}""",
+          encoded.fromJson[JsonField] == Right(value)
+        )
       }
     ),
     suite("toJsonBytes")(
@@ -133,12 +172,12 @@ object SyntaxSpec extends SchemaBaseSpec {
     suite("Json.as[A]")(
       test("decodes Json AST to typed value") {
         val json   = Json.Object("name" -> Json.String("Jack"), "age" -> Json.Number(70))
-        val result = json.as[Person](JsonDecoder.fromSchema[Person])
+        val result = json.as[Person]
         assertTrue(result == Right(Person("Jack", 70)))
       },
       test("returns error for mismatched structure") {
         val json   = Json.Object("wrong" -> Json.String("field"))
-        val result = json.as[Person](JsonDecoder.fromSchema[Person])
+        val result = json.as[Person]
         assertTrue(result.isLeft)
       },
       test("handles primitive types") {
@@ -150,12 +189,12 @@ object SyntaxSpec extends SchemaBaseSpec {
     suite("Json.asUnsafe[A]")(
       test("decodes Json AST to typed value") {
         val json   = Json.Object("name" -> Json.String("Jack"), "age" -> Json.Number(70))
-        val result = json.asUnsafe[Person](JsonDecoder.fromSchema[Person])
+        val result = json.asUnsafe[Person]
         assertTrue(result == Person("Jack", 70))
       },
       test("throws error for mismatched structure") {
         val json   = Json.Object("wrong" -> Json.String("field"))
-        val result = scala.util.Try(json.asUnsafe[Person](JsonDecoder.fromSchema[Person]))
+        val result = scala.util.Try(json.asUnsafe[Person])
         assertTrue(result.isFailure)
       }
     ),
@@ -193,7 +232,7 @@ object SyntaxSpec extends SchemaBaseSpec {
       test("toJson -> as[A] roundtrip") {
         val p       = Person("Oscar", 55)
         val json    = p.toJson
-        val decoded = json.as[Person](JsonDecoder.fromSchema[Person])
+        val decoded = json.as[Person]
         assertTrue(decoded == Right(p))
       },
       test("toJsonString -> fromJson[A] roundtrip") {
@@ -220,7 +259,7 @@ object SyntaxSpec extends SchemaBaseSpec {
       test("empty string values") {
         val p       = Person("", 0)
         val json    = p.toJson
-        val decoded = json.as[Person](JsonDecoder.fromSchema[Person])
+        val decoded = json.as[Person]
         assertTrue(decoded == Right(p))
       },
       test("special characters in strings") {
@@ -238,7 +277,7 @@ object SyntaxSpec extends SchemaBaseSpec {
       test("negative numbers") {
         val p       = Person("Negative", -5)
         val json    = p.toJson
-        val decoded = json.as[Person](JsonDecoder.fromSchema[Person])
+        val decoded = json.as[Person]
         assertTrue(decoded == Right(p))
       }
     )

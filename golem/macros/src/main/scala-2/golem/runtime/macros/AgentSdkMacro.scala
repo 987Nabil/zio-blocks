@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package golem.runtime.macros
 
 import scala.reflect.macros.blackbox
@@ -15,20 +31,19 @@ object AgentSdkMacroImpl {
 
     def defaultTypeNameFromTrait(sym: Symbol): String =
       sym.name.decodedName.toString
-        .replaceAll("([a-z0-9])([A-Z])", "$1-$2")
-        .replaceAll("([A-Z]+)([A-Z][a-z])", "$1-$2")
-        .toLowerCase
 
-    val agentDefinitionType = typeOf[_root_.golem.runtime.annotations.agentDefinition]
+    val agentDefinitionFQN                             = "golem.runtime.annotations.agentDefinition"
+    def isAgentDefinitionAnn(ann: Annotation): Boolean =
+      ann.tree.tpe != null && ann.tree.tpe.typeSymbol.fullName == agentDefinitionFQN
     val rawTypeName: String =
       traitSym.annotations.collectFirst {
-        case ann if ann.tree.tpe != null && ann.tree.tpe =:= agentDefinitionType =>
+        case ann if isAgentDefinitionAnn(ann) =>
           ann.tree.children.tail.collectFirst { case Literal(Constant(s: String)) => s }.getOrElse("")
       }
         .map(_.trim)
         .filter(_.nonEmpty)
         .getOrElse {
-          val hasAnn = traitSym.annotations.exists(a => a.tree.tpe != null && a.tree.tpe =:= agentDefinitionType)
+          val hasAnn = traitSym.annotations.exists(a => isAgentDefinitionAnn(a))
           if (!hasAnn)
             c.abort(c.enclosingPosition, s"Missing @agentDefinition(...) on agent trait: ${traitSym.fullName}")
           defaultTypeNameFromTrait(traitSym)
@@ -44,12 +59,12 @@ object AgentSdkMacroImpl {
     c.Expr[_root_.golem.AgentApi[Trait]](
       q"""
       new _root_.golem.AgentApi[$traitTpe] {
-        override type Constructor = $ctorTpe
+        override type Id = $ctorTpe
         override val typeName: String = $typeName
-        override val agentType: _root_.golem.runtime.agenttype.AgentType[$traitTpe, $ctorTpe] =
+        override val agentType: _root_.golem.runtime.AgentType[$traitTpe, $ctorTpe] =
           _root_.golem.runtime.macros.AgentClientMacro
             .agentType[$traitTpe]
-            .asInstanceOf[_root_.golem.runtime.agenttype.AgentType[$traitTpe, $ctorTpe]]
+            .asInstanceOf[_root_.golem.runtime.AgentType[$traitTpe, $ctorTpe]]
       }
       """
     )

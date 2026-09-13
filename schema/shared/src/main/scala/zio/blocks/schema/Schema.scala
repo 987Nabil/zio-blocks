@@ -16,13 +16,15 @@
 
 package zio.blocks.schema
 
-import zio.blocks.chunk.Chunk
+import zio.blocks.chunk.{Chunk, ChunkMap}
 import zio.blocks.docs.Doc
+import zio.blocks.maybe.Maybe
 import zio.blocks.schema.binding.Binding
-import zio.blocks.schema.derive.{Derivable, Deriver, DerivationBuilder}
+import zio.blocks.schema.derive.{Derivable, DerivationBuilder, Deriver}
 import zio.blocks.typeid.TypeId
-import zio.blocks.schema.json.{Json, JsonFormat, JsonSchema, JsonSchemaToReflect}
+import zio.blocks.schema.json.{Json, JsonCodec, JsonFormat, JsonSchema, JsonSchemaToReflect}
 import zio.blocks.schema.patch.{Patch, PatchMode}
+
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -33,7 +35,9 @@ import java.util.concurrent.ConcurrentHashMap
 final case class Schema[A](reflect: Reflect.Bound[A]) extends SchemaVersionSpecific[A] {
   private[this] val cache: ConcurrentHashMap[codec.Format, ?] = new ConcurrentHashMap
 
-  private[schema] def getInstance[F <: codec.Format](format: F): format.TypeClass[A] =
+  lazy val jsonCodec: JsonCodec[A] = getInstance(JsonFormat)
+
+  def getInstance[F <: codec.Format](format: F): format.TypeClass[A] =
     cache
       .asInstanceOf[ConcurrentHashMap[codec.Format, format.TypeClass[A]]]
       .computeIfAbsent(format, _ => deriving(format.deriver).derive)
@@ -275,6 +279,36 @@ object Schema extends SchemaCompanionVersionSpecific with TypeIdSchemas with Doc
 
   implicit val optionUnit: Schema[Option[Unit]] = new Schema(Reflect.optionUnit(Schema[Unit].reflect))
 
+  implicit def maybe[A <: AnyRef](implicit element: Schema[A]): Schema[Maybe[A]] =
+    new Schema(Reflect.maybe(element.reflect).asInstanceOf[Reflect.Bound[Maybe[A]]])
+
+  implicit val maybeDouble: Schema[Maybe[Double]] =
+    new Schema(Reflect.maybeDouble(Schema[Double].reflect).asInstanceOf[Reflect.Bound[Maybe[Double]]])
+
+  implicit val maybeLong: Schema[Maybe[Long]] =
+    new Schema(Reflect.maybeLong(Schema[Long].reflect).asInstanceOf[Reflect.Bound[Maybe[Long]]])
+
+  implicit val maybeFloat: Schema[Maybe[Float]] =
+    new Schema(Reflect.maybeFloat(Schema[Float].reflect).asInstanceOf[Reflect.Bound[Maybe[Float]]])
+
+  implicit val maybeInt: Schema[Maybe[Int]] =
+    new Schema(Reflect.maybeInt(Schema[Int].reflect).asInstanceOf[Reflect.Bound[Maybe[Int]]])
+
+  implicit val maybeChar: Schema[Maybe[Char]] =
+    new Schema(Reflect.maybeChar(Schema[Char].reflect).asInstanceOf[Reflect.Bound[Maybe[Char]]])
+
+  implicit val maybeShort: Schema[Maybe[Short]] =
+    new Schema(Reflect.maybeShort(Schema[Short].reflect).asInstanceOf[Reflect.Bound[Maybe[Short]]])
+
+  implicit val maybeBoolean: Schema[Maybe[Boolean]] =
+    new Schema(Reflect.maybeBoolean(Schema[Boolean].reflect).asInstanceOf[Reflect.Bound[Maybe[Boolean]]])
+
+  implicit val maybeByte: Schema[Maybe[Byte]] =
+    new Schema(Reflect.maybeByte(Schema[Byte].reflect).asInstanceOf[Reflect.Bound[Maybe[Byte]]])
+
+  implicit val maybeUnit: Schema[Maybe[Unit]] =
+    new Schema(Reflect.maybeUnit(Schema[Unit].reflect).asInstanceOf[Reflect.Bound[Maybe[Unit]]])
+
   implicit def set[A](implicit element: Schema[A]): Schema[Set[A]] = new Schema(Reflect.set(element.reflect))
 
   implicit def list[A](implicit element: Schema[A]): Schema[List[A]] = new Schema(Reflect.list(element.reflect))
@@ -291,8 +325,33 @@ object Schema extends SchemaCompanionVersionSpecific with TypeIdSchemas with Doc
   implicit def map[A, B](implicit key: Schema[A], value: Schema[B]): Schema[collection.immutable.Map[A, B]] =
     new Schema(Reflect.map(key.reflect, value.reflect))
 
-  implicit def either[A, B](implicit l: Schema[A], r: Schema[B]): Schema[Either[A, B]] =
-    new Schema(Reflect.either(l.reflect, r.reflect))
+  implicit def chunkMap[A, B](implicit key: Schema[A], value: Schema[B]): Schema[ChunkMap[A, B]] =
+    new Schema(Reflect.chunkMap(key.reflect, value.reflect))
+
+  /**
+   * Provides a schema for `Either[A, B]` when schemas for both value types are
+   * available.
+   *
+   * Primitive values and primitive-backed wrappers retain their specialized
+   * register layouts in both branches.
+   *
+   * @param left
+   *   the schema for left values
+   * @param right
+   *   the schema for right values
+   * @tparam A
+   *   the left value type
+   * @tparam B
+   *   the right value type
+   * @return
+   *   a schema for `Either[A, B]`
+   * @example
+   *   {{{
+   * val schema = Schema[Either[String, Int]]
+   *   }}}
+   */
+  implicit def either[A, B](implicit left: Schema[A], right: Schema[B]): Schema[Either[A, B]] =
+    new Schema(Reflect.either(left.reflect, right.reflect))
 
   /**
    * Construct a Schema[Json] from a JsonSchema. Values are validated against
@@ -307,8 +366,8 @@ object Schema extends SchemaCompanionVersionSpecific with TypeIdSchemas with Doc
           wrap = { dv =>
             val json = Json.fromDynamicValue(dv)
             jsonSchema.check(json) match {
-              case None        => json
               case Some(error) => throw error
+              case _           => json
             }
           },
           unwrap = j => j.toDynamicValue

@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema.comptime
 
 import scala.language.experimental.macros
@@ -234,7 +250,10 @@ private[comptime] object AllowsMacroImpl {
 
     def isSealed(tpe: Type): Boolean = {
       val sym = tpe.dealias.typeSymbol
-      sym.isClass && { val cs = sym.asClass; cs.isSealed && (cs.isAbstract || cs.isTrait) }
+      sym.isClass && {
+        val cs = sym.asClass
+        cs.isSealed && (cs.isAbstract || cs.isTrait)
+      }
     }
 
     def isProduct(tpe: Type): Boolean =
@@ -272,8 +291,10 @@ private[comptime] object AllowsMacroImpl {
 
     def casesOf(tpe: Type): List[Type] = {
       implicit val positionOrdering: Ordering[Symbol] = (x: Symbol, y: Symbol) => {
-        val xPos  = x.pos; val yPos                      = y.pos
-        val xFile = xPos.source.file.absolute; val yFile = yPos.source.file.absolute
+        val xPos  = x.pos
+        val yPos  = y.pos
+        val xFile = xPos.source.file.absolute
+        val yFile = yPos.source.file.absolute
         var diff  = xFile.path.compareTo(yFile.path)
         if (diff == 0) diff = xFile.name.compareTo(yFile.name)
         if (diff == 0) diff = xPos.line.compareTo(yPos.line)

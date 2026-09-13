@@ -9,7 +9,7 @@ This is Part 2 of the Query DSL series. [Part 1](./query-dsl-reified-optics.md) 
 
 **What we'll cover:**
 
-- Interpreting `SchemaExpr` as a sealed AST via pattern matching
+- Interpreting `SchemaExpr` while keeping the typed API at the boundary
 - Extracting column names from optic paths using `DynamicOptic`
 - Translating relational, logical, arithmetic, and string operations to SQL
 - Building complete `SELECT ... FROM ... WHERE ...` statements
@@ -36,7 +36,7 @@ def findProducts(category: Option[String], maxPrice: Option[Double], inStock: Op
 
 This is fragile, repetitive, and vulnerable to SQL injection. Every new query shape requires new string-building code. The query logic is duplicated -- once as a `SchemaExpr` for in-memory filtering, and again as hand-written SQL for the database.
 
-Since `SchemaExpr` is a sealed trait, we can write a single interpreter that translates *any* query expression into SQL. Write the interpreter once, and every query you build with the Part 1 DSL automatically gets a SQL translation.
+`SchemaExpr` is the user-facing query API. Internally it wraps a `DynamicSchemaExpr` — a sealed trait whose cases represent the full expression AST. That means we can write a single interpreter that accepts `SchemaExpr`, then crosses into the dynamic AST internally to translate *any* query expression into SQL. Write the interpreter once, and every query you build with the Part 1 DSL automatically gets a SQL translation.
 
 ## Prerequisites
 
@@ -74,24 +74,33 @@ object Product extends CompanionOptics[Product] {
 }
 ```
 
-## The SchemaExpr AST
+## The SchemaExpr API
 
-Before we build the interpreter, let's understand the structure we are interpreting. `SchemaExpr` is a sealed trait with these cases:
+Before we build the interpreter, keep the API boundary in mind: application code builds `SchemaExpr[A, B]` values, while interpreter code may inspect the underlying `DynamicSchemaExpr` through `.dynamic`.
 
 ```
-SchemaExpr[A, B]
-├── Literal[S, A](value, schema)                              -- a constant value
-├── Optic[A, B](optic)                                        -- a field reference
-├── StringRegexMatch[A](regex, string)                       -- regex pattern matching
-├── StringLength[A](string)                                  -- string length calculation
-├── UnaryOp[A, B]                                            -- abstract trait for unary operations
-│   └── Not[A](expr)                                         -- boolean negation
-└── BinaryOp[A, B, C]                                        -- abstract trait for binary operations
-    ├── Relational[A, B](left, right, operator)              -- comparison operations
-    ├── Logical[A](left, right, operator)                    -- boolean operations
-    ├── Arithmetic[S, A](left, right, operator, isNumeric)   -- numeric operations
-    └── StringConcat[A](left, right)                         -- string concatenation
+SchemaExpr[A, B]                        -- user-facing, typed API
+└── .dynamic: DynamicSchemaExpr         -- interpreter/runtime boundary
+    ├── Select(path: DynamicOptic)      -- field reference
+    ├── Literal(value: DynamicValue, schema: Schema[_])  -- constant value
+    ├── Relational(left, right, op)     -- comparisons
+    ├── Logical(left, right, op)        -- boolean operators
+    ├── Not(expr)                       -- negation
+    ├── Arithmetic(left, right, op, _)  -- numeric operators
+    ├── StringConcat(left, right)       -- string concatenation
+    ├── StringRegexMatch(regex, string) -- pattern matching
+    └── StringLength(string)            -- string length
+```
 
+Most users never need to construct `DynamicSchemaExpr` directly. The normal workflow is:
+
+1. Build a typed `SchemaExpr` with optics and operators.
+2. Pass that `SchemaExpr` to your interpreter.
+3. Let the interpreter read `.dynamic` internally.
+
+The dynamic cases are still worth understanding because they are what your interpreter will pattern-match on:
+
+```
 RelationalOperator
 ├── LessThan
 ├── GreaterThan
@@ -110,7 +119,7 @@ ArithmeticOperator
 └── Multiply
 ```
 
-Each case carries enough information to produce SQL: `Optic` nodes carry field paths, `Literal` nodes carry values, and operator nodes carry the operation type. Our interpreter walks this tree and emits SQL fragments.
+Each dynamic case carries enough information to produce SQL: `Select` nodes carry field paths, `Literal` nodes carry values, and operator nodes carry the operation type. Our interpreter walks this tree and emits SQL fragments.
 
 ## Extracting Column Names from Optics
 
@@ -121,6 +130,9 @@ def columnName(optic: zio.blocks.schema.Optic[?, ?]): String = {
   val nodes = optic.toDynamic.nodes
   nodes.collect { case f: DynamicOptic.Node.Field => f.name }.mkString("_")
 }
+
+def columnName(path: DynamicOptic): String =
+  path.nodes.collect { case f: DynamicOptic.Node.Field => f.name }.mkString("_")
 ```
 
 This converts the optic path to a column name. For a simple field like `Product.price`, it produces `"price"`. For a nested path, it joins field names with underscores (we will refine this for table-qualified names later).
@@ -133,92 +145,106 @@ columnName(Product.category)
 
 ## Translating Literals to SQL
 
-Literal values need proper SQL formatting -- strings must be quoted, booleans converted to SQL syntax:
+Once we cross the interpreter boundary, literal values appear as `DynamicValue`. We need a function to format them as SQL:
 
 ```scala mdoc:silent
-def sqlLiteral(value: Any): String = value match {
-  case s: String     => s"'${s.replace("'", "''")}'"
-  case b: Boolean    => if (b) "TRUE" else "FALSE"
-  case n: Number     => n.toString
-  case other         => other.toString
+def sqlLiteralDV(dv: DynamicValue): String = dv match {
+  case DynamicValue.Primitive(pv) =>
+    pv match {
+      case PrimitiveValue.String(s)  => s"'${s.replace("'", "''")}'"
+      case PrimitiveValue.Boolean(b) => if (b) "TRUE" else "FALSE"
+      case PrimitiveValue.Int(n)     => n.toString
+      case PrimitiveValue.Long(n)    => n.toString
+      case PrimitiveValue.Double(n)  => n.toString
+      case PrimitiveValue.Float(n)   => n.toString
+      case PrimitiveValue.Short(n)   => n.toString
+      case PrimitiveValue.Byte(n)    => n.toString
+      case other                     => other.toString
+    }
+  case other => other.toString
 }
 ```
 
 ## Building the SQL Interpreter
 
-Now we build the core interpreter. It pattern-matches on each `SchemaExpr` case and produces a SQL string:
+Now we build the core interpreter. The public entry point accepts `SchemaExpr`; the internal helper does the `DynamicSchemaExpr` pattern matching:
 
 ```scala mdoc:silent
-def toSql[A, B](expr: SchemaExpr[A, B]): String = expr match {
+def toSql[A, B](expr: SchemaExpr[A, B]): String = toSqlDynamic(expr.dynamic)
+
+private def toSqlDynamic(expr: DynamicSchemaExpr): String = expr match {
 
   // Field reference → column name
-  case SchemaExpr.Optic(optic) =>
-    columnName(optic)
+  case DynamicSchemaExpr.Select(path) =>
+    columnName(path)
 
   // Constant value → SQL literal
-  case SchemaExpr.Literal(value, _) =>
-    sqlLiteral(value)
+  case DynamicSchemaExpr.Literal(value, _) =>
+    sqlLiteralDV(value)
 
   // Comparison operators → SQL relational operators
-  case SchemaExpr.Relational(left, right, op) =>
+  case DynamicSchemaExpr.Relational(left, right, op) =>
     val sqlOp = op match {
-      case SchemaExpr.RelationalOperator.Equal              => "="
-      case SchemaExpr.RelationalOperator.NotEqual           => "<>"
-      case SchemaExpr.RelationalOperator.LessThan           => "<"
-      case SchemaExpr.RelationalOperator.LessThanOrEqual    => "<="
-      case SchemaExpr.RelationalOperator.GreaterThan        => ">"
-      case SchemaExpr.RelationalOperator.GreaterThanOrEqual => ">="
+      case DynamicSchemaExpr.RelationalOperator.Equal              => "="
+      case DynamicSchemaExpr.RelationalOperator.NotEqual           => "<>"
+      case DynamicSchemaExpr.RelationalOperator.LessThan           => "<"
+      case DynamicSchemaExpr.RelationalOperator.LessThanOrEqual    => "<="
+      case DynamicSchemaExpr.RelationalOperator.GreaterThan        => ">"
+      case DynamicSchemaExpr.RelationalOperator.GreaterThanOrEqual => ">="
     }
-    s"(${toSql(left)} $sqlOp ${toSql(right)})"
+    s"(${toSqlDynamic(left)} $sqlOp ${toSqlDynamic(right)})"
 
   // Boolean operators → AND / OR
-  case SchemaExpr.Logical(left, right, op) =>
+  case DynamicSchemaExpr.Logical(left, right, op) =>
     val sqlOp = op match {
-      case SchemaExpr.LogicalOperator.And => "AND"
-      case SchemaExpr.LogicalOperator.Or  => "OR"
+      case DynamicSchemaExpr.LogicalOperator.And => "AND"
+      case DynamicSchemaExpr.LogicalOperator.Or  => "OR"
     }
-    s"(${toSql(left)} $sqlOp ${toSql(right)})"
+    s"(${toSqlDynamic(left)} $sqlOp ${toSqlDynamic(right)})"
 
   // Negation → NOT
-  case SchemaExpr.Not(inner) =>
-    s"NOT (${toSql(inner)})"
+  case DynamicSchemaExpr.Not(inner) =>
+    s"NOT (${toSqlDynamic(inner)})"
 
   // Arithmetic → SQL math operators
-  case SchemaExpr.Arithmetic(left, right, op, _) =>
+  case DynamicSchemaExpr.Arithmetic(left, right, op, _) =>
     val sqlOp = op match {
-      case SchemaExpr.ArithmeticOperator.Add      => "+"
-      case SchemaExpr.ArithmeticOperator.Subtract => "-"
-      case SchemaExpr.ArithmeticOperator.Multiply => "*"
+      case DynamicSchemaExpr.ArithmeticOperator.Add      => "+"
+      case DynamicSchemaExpr.ArithmeticOperator.Subtract => "-"
+      case DynamicSchemaExpr.ArithmeticOperator.Multiply => "*"
+      case _                                             => "?"
     }
-    s"(${toSql(left)} $sqlOp ${toSql(right)})"
+    s"(${toSqlDynamic(left)} $sqlOp ${toSqlDynamic(right)})"
 
   // String concatenation → CONCAT()
-  case SchemaExpr.StringConcat(left, right) =>
-    s"CONCAT(${toSql(left)}, ${toSql(right)})"
+  case DynamicSchemaExpr.StringConcat(left, right) =>
+    s"CONCAT(${toSqlDynamic(left)}, ${toSqlDynamic(right)})"
 
   // Regex match → column LIKE pattern (simplified)
-  case SchemaExpr.StringRegexMatch(regex, string) =>
-    s"(${toSql(string)} LIKE ${toSql(regex)})"
+  case DynamicSchemaExpr.StringRegexMatch(regex, string) =>
+    s"(${toSqlDynamic(string)} LIKE ${toSqlDynamic(regex)})"
 
   // String length → LENGTH()
-  case SchemaExpr.StringLength(string) =>
-    s"LENGTH(${toSql(string)})"
+  case DynamicSchemaExpr.StringLength(string) =>
+    s"LENGTH(${toSqlDynamic(string)})"
+
+  case _ => "?"
 }
 ```
 
-The mapping from `SchemaExpr` to SQL is direct:
+The mapping from `DynamicSchemaExpr` to SQL is direct, but that dynamic matching stays inside the interpreter implementation:
 
-| SchemaExpr Case     | SQL Output                           |
-|---------------------|--------------------------------------|
-| `Optic(optic)`      | Column name from `toDynamic`         |
-| `Literal(v, _)`     | SQL literal (`'text'`, `42`, `TRUE`) |
-| `Relational(_, _, op)` | `=`, `<>`, `<`, `>`, `<=`, `>=`   |
-| `Logical(_, _, op)` | `AND`, `OR`                          |
-| `Not(expr)`         | `NOT (...)`                          |
-| `Arithmetic(_, _, op, _)` | `+`, `-`, `*`                  |
-| `StringConcat`      | `CONCAT(a, b)`                       |
-| `StringRegexMatch`  | `LIKE` (pattern matching)            |
-| `StringLength`      | `LENGTH(col)`                        |
+| DynamicSchemaExpr Case | SQL Output                           |
+|------------------------|--------------------------------------|
+| `Select(path)`         | Column name from `DynamicOptic`      |
+| `Literal(value, schema)` | SQL literal (`'text'`, `42`, `TRUE`) |
+| `Relational(_, _, op)` | `=`, `<>`, `<`, `>`, `<=`, `>=`      |
+| `Logical(_, _, op)`    | `AND`, `OR`                          |
+| `Not(expr)`            | `NOT (...)`                          |
+| `Arithmetic(_, _, op, _)` | `+`, `-`, `*`                     |
+| `StringConcat`         | `CONCAT(a, b)`                       |
+| `StringRegexMatch`     | `LIKE` (pattern matching)            |
+| `StringLength`         | `LENGTH(col)`                        |
 
 ## Generating SQL from Queries
 
@@ -349,63 +375,80 @@ The `toSql` function above inlines literal values directly into the SQL string. 
 ```scala mdoc:silent
 case class SqlQuery(sql: String, params: List[Any])
 
-def toParameterized[A, B](expr: SchemaExpr[A, B]): SqlQuery = expr match {
+def toParameterized[A, B](expr: SchemaExpr[A, B]): SqlQuery = toParameterizedDynamic(expr.dynamic)
 
-  case SchemaExpr.Optic(optic) =>
-    SqlQuery(columnName(optic), Nil)
+private def toParameterizedDynamic(expr: DynamicSchemaExpr): SqlQuery = expr match {
 
-  case SchemaExpr.Literal(value, _) =>
-    SqlQuery("?", List(value))
+  case DynamicSchemaExpr.Select(path) =>
+    SqlQuery(columnName(path), Nil)
 
-  case SchemaExpr.Relational(left, right, op) =>
-    val l = toParameterized(left)
-    val r = toParameterized(right)
+  case DynamicSchemaExpr.Literal(value, _) =>
+    val param = value match {
+      case DynamicValue.Primitive(pv) => pv match {
+        case PrimitiveValue.String(s)     => s
+        case PrimitiveValue.Boolean(b)    => b
+        case PrimitiveValue.Int(n)        => n
+        case PrimitiveValue.Long(n)       => n
+        case PrimitiveValue.Double(n)     => n
+        case PrimitiveValue.Float(n)      => n
+        case PrimitiveValue.Short(n)      => n
+        case PrimitiveValue.Byte(n)       => n
+        case PrimitiveValue.BigInt(n)     => n
+        case PrimitiveValue.BigDecimal(n) => n
+        case PrimitiveValue.Char(c)       => c
+        case other                        => other.toString
+      }
+      case other => other.toString
+    }
+    SqlQuery("?", List(param))
+
+  case DynamicSchemaExpr.Relational(left, right, op) =>
+    val l = toParameterizedDynamic(left); val r = toParameterizedDynamic(right)
     val sqlOp = op match {
-      case SchemaExpr.RelationalOperator.Equal              => "="
-      case SchemaExpr.RelationalOperator.NotEqual           => "<>"
-      case SchemaExpr.RelationalOperator.LessThan           => "<"
-      case SchemaExpr.RelationalOperator.LessThanOrEqual    => "<="
-      case SchemaExpr.RelationalOperator.GreaterThan        => ">"
-      case SchemaExpr.RelationalOperator.GreaterThanOrEqual => ">="
+      case DynamicSchemaExpr.RelationalOperator.Equal              => "="
+      case DynamicSchemaExpr.RelationalOperator.NotEqual           => "<>"
+      case DynamicSchemaExpr.RelationalOperator.LessThan           => "<"
+      case DynamicSchemaExpr.RelationalOperator.LessThanOrEqual    => "<="
+      case DynamicSchemaExpr.RelationalOperator.GreaterThan        => ">"
+      case DynamicSchemaExpr.RelationalOperator.GreaterThanOrEqual => ">="
     }
     SqlQuery(s"(${l.sql} $sqlOp ${r.sql})", l.params ++ r.params)
 
-  case SchemaExpr.Logical(left, right, op) =>
-    val l = toParameterized(left)
-    val r = toParameterized(right)
+  case DynamicSchemaExpr.Logical(left, right, op) =>
+    val l = toParameterizedDynamic(left); val r = toParameterizedDynamic(right)
     val sqlOp = op match {
-      case SchemaExpr.LogicalOperator.And => "AND"
-      case SchemaExpr.LogicalOperator.Or  => "OR"
+      case DynamicSchemaExpr.LogicalOperator.And => "AND"
+      case DynamicSchemaExpr.LogicalOperator.Or  => "OR"
     }
     SqlQuery(s"(${l.sql} $sqlOp ${r.sql})", l.params ++ r.params)
 
-  case SchemaExpr.Not(inner) =>
-    val i = toParameterized(inner)
+  case DynamicSchemaExpr.Not(inner) =>
+    val i = toParameterizedDynamic(inner)
     SqlQuery(s"NOT (${i.sql})", i.params)
 
-  case SchemaExpr.Arithmetic(left, right, op, _) =>
-    val l = toParameterized(left)
-    val r = toParameterized(right)
+  case DynamicSchemaExpr.Arithmetic(left, right, op, _) =>
+    val l = toParameterizedDynamic(left); val r = toParameterizedDynamic(right)
     val sqlOp = op match {
-      case SchemaExpr.ArithmeticOperator.Add      => "+"
-      case SchemaExpr.ArithmeticOperator.Subtract => "-"
-      case SchemaExpr.ArithmeticOperator.Multiply => "*"
+      case DynamicSchemaExpr.ArithmeticOperator.Add      => "+"
+      case DynamicSchemaExpr.ArithmeticOperator.Subtract => "-"
+      case DynamicSchemaExpr.ArithmeticOperator.Multiply => "*"
+      case _                                             => "?"
     }
     SqlQuery(s"(${l.sql} $sqlOp ${r.sql})", l.params ++ r.params)
 
-  case SchemaExpr.StringConcat(left, right) =>
-    val l = toParameterized(left)
-    val r = toParameterized(right)
+  case DynamicSchemaExpr.StringConcat(left, right) =>
+    val l = toParameterizedDynamic(left); val r = toParameterizedDynamic(right)
     SqlQuery(s"CONCAT(${l.sql}, ${r.sql})", l.params ++ r.params)
 
-  case SchemaExpr.StringRegexMatch(regex, string) =>
-    val s = toParameterized(string)
-    val r = toParameterized(regex)
+  case DynamicSchemaExpr.StringRegexMatch(regex, string) =>
+    val s = toParameterizedDynamic(string); val r = toParameterizedDynamic(regex)
     SqlQuery(s"(${s.sql} LIKE ${r.sql})", s.params ++ r.params)
 
-  case SchemaExpr.StringLength(string) =>
-    val s = toParameterized(string)
+  case DynamicSchemaExpr.StringLength(string) =>
+    val s = toParameterizedDynamic(string)
     SqlQuery(s"LENGTH(${s.sql})", s.params)
+
+  case _ => SqlQuery("?", Nil)
 }
 ```
 
@@ -526,90 +569,128 @@ object Product extends CompanionOptics[Product] {
 def columnName(optic: zio.blocks.schema.Optic[?, ?]): String =
   optic.toDynamic.nodes.collect { case f: DynamicOptic.Node.Field => f.name }.mkString("_")
 
-def sqlLiteral(value: Any): String = value match {
-  case s: String  => s"'${s.replace("'", "''")}'"
-  case b: Boolean => if (b) "TRUE" else "FALSE"
-  case n: Number  => n.toString
-  case other      => other.toString
+def columnName(path: DynamicOptic): String =
+  path.nodes.collect { case f: DynamicOptic.Node.Field => f.name }.mkString("_")
+
+def sqlLiteralDV(dv: DynamicValue): String = dv match {
+  case DynamicValue.Primitive(pv) =>
+    pv match {
+      case PrimitiveValue.String(s)  => s"'${s.replace("'", "''")}'"
+      case PrimitiveValue.Boolean(b) => if (b) "TRUE" else "FALSE"
+      case PrimitiveValue.Int(n)     => n.toString
+      case PrimitiveValue.Long(n)    => n.toString
+      case PrimitiveValue.Double(n)  => n.toString
+      case PrimitiveValue.Float(n)   => n.toString
+      case PrimitiveValue.Short(n)   => n.toString
+      case PrimitiveValue.Byte(n)    => n.toString
+      case other                     => other.toString
+    }
+  case other => other.toString
 }
 
-def toSql[A, B](expr: SchemaExpr[A, B]): String = expr match {
-  case SchemaExpr.Optic(optic)                    => columnName(optic)
-  case SchemaExpr.Literal(value, _)               => sqlLiteral(value)
-  case SchemaExpr.Relational(left, right, op) =>
+def toSql[A, B](expr: SchemaExpr[A, B]): String = toSqlDynamic(expr.dynamic)
+
+private def toSqlDynamic(expr: DynamicSchemaExpr): String = expr match {
+  case DynamicSchemaExpr.Select(path)              => columnName(path)
+  case DynamicSchemaExpr.Literal(value, _)         => sqlLiteralDV(value)
+  case DynamicSchemaExpr.Relational(left, right, op) =>
     val sqlOp = op match {
-      case SchemaExpr.RelationalOperator.Equal              => "="
-      case SchemaExpr.RelationalOperator.NotEqual           => "<>"
-      case SchemaExpr.RelationalOperator.LessThan           => "<"
-      case SchemaExpr.RelationalOperator.LessThanOrEqual    => "<="
-      case SchemaExpr.RelationalOperator.GreaterThan        => ">"
-      case SchemaExpr.RelationalOperator.GreaterThanOrEqual => ">="
+      case DynamicSchemaExpr.RelationalOperator.Equal              => "="
+      case DynamicSchemaExpr.RelationalOperator.NotEqual           => "<>"
+      case DynamicSchemaExpr.RelationalOperator.LessThan           => "<"
+      case DynamicSchemaExpr.RelationalOperator.LessThanOrEqual    => "<="
+      case DynamicSchemaExpr.RelationalOperator.GreaterThan        => ">"
+      case DynamicSchemaExpr.RelationalOperator.GreaterThanOrEqual => ">="
     }
-    s"(${toSql(left)} $sqlOp ${toSql(right)})"
-  case SchemaExpr.Logical(left, right, op) =>
+    s"(${toSqlDynamic(left)} $sqlOp ${toSqlDynamic(right)})"
+  case DynamicSchemaExpr.Logical(left, right, op) =>
     val sqlOp = op match {
-      case SchemaExpr.LogicalOperator.And => "AND"
-      case SchemaExpr.LogicalOperator.Or  => "OR"
+      case DynamicSchemaExpr.LogicalOperator.And => "AND"
+      case DynamicSchemaExpr.LogicalOperator.Or  => "OR"
     }
-    s"(${toSql(left)} $sqlOp ${toSql(right)})"
-  case SchemaExpr.Not(inner)                      => s"NOT (${toSql(inner)})"
-  case SchemaExpr.Arithmetic(left, right, op, _) =>
+    s"(${toSqlDynamic(left)} $sqlOp ${toSqlDynamic(right)})"
+  case DynamicSchemaExpr.Not(inner)                      => s"NOT (${toSqlDynamic(inner)})"
+  case DynamicSchemaExpr.Arithmetic(left, right, op, _) =>
     val sqlOp = op match {
-      case SchemaExpr.ArithmeticOperator.Add      => "+"
-      case SchemaExpr.ArithmeticOperator.Subtract => "-"
-      case SchemaExpr.ArithmeticOperator.Multiply => "*"
+      case DynamicSchemaExpr.ArithmeticOperator.Add      => "+"
+      case DynamicSchemaExpr.ArithmeticOperator.Subtract => "-"
+      case DynamicSchemaExpr.ArithmeticOperator.Multiply => "*"
+      case _                                             => "?"
     }
-    s"(${toSql(left)} $sqlOp ${toSql(right)})"
-  case SchemaExpr.StringConcat(left, right)       => s"CONCAT(${toSql(left)}, ${toSql(right)})"
-  case SchemaExpr.StringRegexMatch(regex, string) => s"(${toSql(string)} LIKE ${toSql(regex)})"
-  case SchemaExpr.StringLength(string)            => s"LENGTH(${toSql(string)})"
+    s"(${toSqlDynamic(left)} $sqlOp ${toSqlDynamic(right)})"
+  case DynamicSchemaExpr.StringConcat(left, right)       => s"CONCAT(${toSqlDynamic(left)}, ${toSqlDynamic(right)})"
+  case DynamicSchemaExpr.StringRegexMatch(regex, string) => s"(${toSqlDynamic(string)} LIKE ${toSqlDynamic(regex)})"
+  case DynamicSchemaExpr.StringLength(string)            => s"LENGTH(${toSqlDynamic(string)})"
+  case _                                                 => "?"
 }
 
 // --- Parameterized queries ---
 
 case class SqlQuery(sql: String, params: List[Any])
 
-def toParameterized[A, B](expr: SchemaExpr[A, B]): SqlQuery = expr match {
-  case SchemaExpr.Optic(optic)      => SqlQuery(columnName(optic), Nil)
-  case SchemaExpr.Literal(value, _) => SqlQuery("?", List(value))
-  case SchemaExpr.Relational(left, right, op) =>
-    val l = toParameterized(left); val r = toParameterized(right)
+def toParameterized[A, B](expr: SchemaExpr[A, B]): SqlQuery = toParameterizedDynamic(expr.dynamic)
+
+private def toParameterizedDynamic(expr: DynamicSchemaExpr): SqlQuery = expr match {
+  case DynamicSchemaExpr.Select(path)   => SqlQuery(columnName(path), Nil)
+  case DynamicSchemaExpr.Literal(value, _) =>
+    val param = value match {
+      case DynamicValue.Primitive(pv) => pv match {
+        case PrimitiveValue.String(s)     => s
+        case PrimitiveValue.Boolean(b)    => b
+        case PrimitiveValue.Int(n)        => n
+        case PrimitiveValue.Long(n)       => n
+        case PrimitiveValue.Double(n)     => n
+        case PrimitiveValue.Float(n)      => n
+        case PrimitiveValue.Short(n)      => n
+        case PrimitiveValue.Byte(n)       => n
+        case PrimitiveValue.BigInt(n)     => n
+        case PrimitiveValue.BigDecimal(n) => n
+        case PrimitiveValue.Char(c)       => c
+        case other                        => other.toString
+      }
+      case other => other.toString
+    }
+    SqlQuery("?", List(param))
+  case DynamicSchemaExpr.Relational(left, right, op) =>
+    val l = toParameterizedDynamic(left); val r = toParameterizedDynamic(right)
     val sqlOp = op match {
-      case SchemaExpr.RelationalOperator.Equal              => "="
-      case SchemaExpr.RelationalOperator.NotEqual           => "<>"
-      case SchemaExpr.RelationalOperator.LessThan           => "<"
-      case SchemaExpr.RelationalOperator.LessThanOrEqual    => "<="
-      case SchemaExpr.RelationalOperator.GreaterThan        => ">"
-      case SchemaExpr.RelationalOperator.GreaterThanOrEqual => ">="
+      case DynamicSchemaExpr.RelationalOperator.Equal              => "="
+      case DynamicSchemaExpr.RelationalOperator.NotEqual           => "<>"
+      case DynamicSchemaExpr.RelationalOperator.LessThan           => "<"
+      case DynamicSchemaExpr.RelationalOperator.LessThanOrEqual    => "<="
+      case DynamicSchemaExpr.RelationalOperator.GreaterThan        => ">"
+      case DynamicSchemaExpr.RelationalOperator.GreaterThanOrEqual => ">="
     }
     SqlQuery(s"(${l.sql} $sqlOp ${r.sql})", l.params ++ r.params)
-  case SchemaExpr.Logical(left, right, op) =>
-    val l = toParameterized(left); val r = toParameterized(right)
+  case DynamicSchemaExpr.Logical(left, right, op) =>
+    val l = toParameterizedDynamic(left); val r = toParameterizedDynamic(right)
     val sqlOp = op match {
-      case SchemaExpr.LogicalOperator.And => "AND"
-      case SchemaExpr.LogicalOperator.Or  => "OR"
+      case DynamicSchemaExpr.LogicalOperator.And => "AND"
+      case DynamicSchemaExpr.LogicalOperator.Or  => "OR"
     }
     SqlQuery(s"(${l.sql} $sqlOp ${r.sql})", l.params ++ r.params)
-  case SchemaExpr.Not(inner) =>
-    val i = toParameterized(inner)
+  case DynamicSchemaExpr.Not(inner) =>
+    val i = toParameterizedDynamic(inner)
     SqlQuery(s"NOT (${i.sql})", i.params)
-  case SchemaExpr.Arithmetic(left, right, op, _) =>
-    val l = toParameterized(left); val r = toParameterized(right)
+  case DynamicSchemaExpr.Arithmetic(left, right, op, _) =>
+    val l = toParameterizedDynamic(left); val r = toParameterizedDynamic(right)
     val sqlOp = op match {
-      case SchemaExpr.ArithmeticOperator.Add      => "+"
-      case SchemaExpr.ArithmeticOperator.Subtract => "-"
-      case SchemaExpr.ArithmeticOperator.Multiply => "*"
+      case DynamicSchemaExpr.ArithmeticOperator.Add      => "+"
+      case DynamicSchemaExpr.ArithmeticOperator.Subtract => "-"
+      case DynamicSchemaExpr.ArithmeticOperator.Multiply => "*"
+      case _                                             => "?"
     }
     SqlQuery(s"(${l.sql} $sqlOp ${r.sql})", l.params ++ r.params)
-  case SchemaExpr.StringConcat(left, right) =>
-    val l = toParameterized(left); val r = toParameterized(right)
+  case DynamicSchemaExpr.StringConcat(left, right) =>
+    val l = toParameterizedDynamic(left); val r = toParameterizedDynamic(right)
     SqlQuery(s"CONCAT(${l.sql}, ${r.sql})", l.params ++ r.params)
-  case SchemaExpr.StringRegexMatch(regex, string) =>
-    val s = toParameterized(string); val r = toParameterized(regex)
+  case DynamicSchemaExpr.StringRegexMatch(regex, string) =>
+    val s = toParameterizedDynamic(string); val r = toParameterizedDynamic(regex)
     SqlQuery(s"(${s.sql} LIKE ${r.sql})", s.params ++ r.params)
-  case SchemaExpr.StringLength(string) =>
-    val s = toParameterized(string)
+  case DynamicSchemaExpr.StringLength(string) =>
+    val s = toParameterizedDynamic(string)
     SqlQuery(s"LENGTH(${s.sql})", s.params)
+  case _ => SqlQuery("?", Nil)
 }
 
 // --- Complete SELECT builder ---
@@ -645,13 +726,416 @@ println(toSql(Product.price * 0.9))
 // (price * 0.9)
 ```
 
+## Upsert (ON CONFLICT)
+
+Upsert (insert-or-update) combines an `INSERT` with a conflict handler so the
+statement is idempotent. When a row with the conflicting key already exists, the
+database either skips the insert or updates specified columns.
+
+All identifiers (table name, column names, conflict column) are validated through
+`SqlIdentifier.validate` and assignment columns are additionally checked against
+`Table.columns`. Invalid or unknown names throw `IllegalArgumentException` at
+build time, not at execution time.
+
+### Table-aware builders
+
+The high-level `Upsert` builders accept a `Table[A]` and an entity. The table
+provides column names and a codec that extracts `DbValue` parameters.
+
+`Upsert.insertDoNothing` builds `INSERT ... ON CONFLICT ("id") DO NOTHING`:
+
+```scala mdoc:compile-only
+import zio.blocks.sql.*
+import zio.blocks.schema.Schema
+
+case class User(id: Int, name: String, email: String)
+object User { implicit val schema: Schema[User] = Schema.derived }
+
+val table: Table[User] = Table.derived[User]
+val user = User(42, "Alice", "alice@example.com")
+
+// INSERT INTO "user" ("id", "name", "email") VALUES (?, ?, ?) ON CONFLICT ("id") DO NOTHING
+val frag: Frag = Upsert.insertDoNothing(table, user, conflictColumn = "id")
+```
+
+`Upsert.insertDoUpdate` builds `INSERT ... ON CONFLICT ("id") DO UPDATE SET`
+for **all** non-conflict columns:
+
+```scala mdoc:compile-only
+import zio.blocks.sql.*
+import zio.blocks.schema.Schema
+
+case class User(id: Int, name: String, email: String)
+object User { implicit val schema: Schema[User] = Schema.derived }
+
+val table: Table[User] = Table.derived[User]
+val user = User(42, "Alice", "alice@example.com")
+
+// INSERT INTO "user" ("id", "name", "email") VALUES (?, ?, ?)
+//   ON CONFLICT ("id") DO UPDATE SET "name" = ?, "email" = ?
+val frag: Frag = Upsert.insertDoUpdate(table, user, conflictColumn = "id")
+```
+
+Pass `updateColumns` to restrict which columns are overwritten on conflict:
+
+```scala mdoc:compile-only
+import zio.blocks.sql.*
+import zio.blocks.schema.Schema
+
+case class User(id: Int, name: String, email: String)
+object User { implicit val schema: Schema[User] = Schema.derived }
+
+val table: Table[User] = Table.derived[User]
+val user = User(42, "Alice", "alice@example.com")
+
+// Only "name" is updated on conflict; "email" keeps its original value
+val frag: Frag = Upsert.insertDoUpdate(table, user, conflictColumn = "id", updateColumns = Seq("name"))
+```
+
+### Low-level builders
+
+When you need full control over column names and values (e.g. computed or
+transformed data), use the low-level `Upsert.doNothing`, `Upsert.doNothingRaw`,
+and `Upsert.doUpdate` builders:
+
+```scala mdoc:compile-only
+import zio.blocks.sql.*
+
+// Low-level DO NOTHING with explicit columns and values
+val frag1: Frag = Upsert.doNothing(
+  tableName   = "users",
+  columns     = IndexedSeq("id", "name", "email"),
+  values      = IndexedSeq(DbValue.DbInt(1), DbValue.DbString("Bob"), DbValue.DbString("bob@example.com")),
+  conflictColumn = "id"
+)
+
+// Comma-joined column string variant
+val frag2: Frag = Upsert.doNothingRaw(
+  tableName   = "users",
+  allColumns  = "id, name, email",
+  values      = IndexedSeq(DbValue.DbInt(1), DbValue.DbString("Bob"), DbValue.DbString("bob@example.com")),
+  conflictColumn = "id"
+)
+
+// Low-level DO UPDATE with explicit assignments
+val frag3: Frag = Upsert.doUpdate(
+  tableName      = "users",
+  columns        = IndexedSeq("id", "name", "email"),
+  values         = IndexedSeq(DbValue.DbInt(1), DbValue.DbString("Bob"), DbValue.DbString("bob@example.com")),
+  conflictColumn = "id",
+  assignments    = IndexedSeq("name" -> DbValue.DbString("Bob"), "email" -> DbValue.DbString("bob@example.com"))
+)
+```
+
+### Suffix builders
+
+To append an `ON CONFLICT` clause to an existing `INSERT` `Frag`, use the suffix
+builders:
+
+```scala mdoc:compile-only
+import zio.blocks.sql.*
+
+val base: Frag = Frag.literal("INSERT INTO users (id, name) VALUES (?, ?)")
+
+// Append DO NOTHING suffix
+val withNothing: Frag = base ++ Upsert.doNothingSuffix(conflictColumn = "id")
+
+// Append DO UPDATE suffix with explicit assignments
+val withUpdate: Frag = base ++ Upsert.doUpdateSuffix(
+  conflictColumn = "id",
+  assignments    = IndexedSeq("name" -> DbValue.DbString("updated"))
+)
+```
+
+### Repository integration
+
+`Repo` provides `insertOrUpdate` and `insertOrUpdateBatch` as convenience
+wrappers that use `Upsert.insertDoUpdate` under the hood. The conflict target is
+the repository's validated ID column, and all non-ID columns are overwritten with
+the entity's values.
+
+```scala mdoc:compile-only
+import zio.blocks.sql.*
+import zio.blocks.schema.Schema
+
+case class User(id: Int, name: String, email: String)
+object User { implicit val schema: Schema[User] = Schema.derived }
+
+given DbCon = ???
+
+val table: Table[User] = Table.derived[User]
+val repo: Repo[User, Int] = ???
+
+val user = User(42, "Alice", "alice@example.com")
+
+// Single upsert
+val affected: Int = repo.insertOrUpdate(user)
+
+// Batch upsert
+val users: List[User] = List(user, User(43, "Bob", "bob@example.com"))
+val totalAffected: Int = repo.insertOrUpdateBatch(users)
+```
+
+These generate SQL like:
+
+```sql
+INSERT INTO "user" ("id", "name", "email") VALUES (?, ?, ?)
+  ON CONFLICT ("id") DO UPDATE SET "name" = ?, "email" = ?
+```
+
+`insertOrUpdateBatch` uses a JDBC batch for efficiency, mirroring the pattern of
+`insertBatch`. Both return the total affected row count.
+
+## Keyset Pagination
+
+Keyset (cursor) pagination avoids the cost and drift of `OFFSET` by seeking
+after the last seen key: `WHERE id > ? ORDER BY id ASC LIMIT n`. The row
+identified by the cursor is excluded (`>` not `>=`) so consecutive pages do
+not duplicate the boundary row.
+
+`Repo` exposes this directly for primary-key cursors:
+
+```scala mdoc:compile-only
+import zio.blocks.sql.*
+import zio.blocks.schema.Schema
+
+case class User(id: Int, name: String, email: String)
+object User { implicit val schema: Schema[User] = Schema.derived }
+
+given DbCon = ???
+
+val repo: Repo[User, Int] = ??? // e.g. Repo(table, "id", idCodec, _.id)
+
+val firstPage: List[User]  = repo.pageAfter(cursorId = 0, limit = 20)
+val nextPage: List[User]   = repo.pageAfter(cursorId = firstPage.last.id, limit = 20)
+// when cursorId == last id, nextPage is empty
+```
+
+It renders as:
+
+```sql
+SELECT "id", "name", "email" FROM "user" WHERE "id" > ? ORDER BY "id" ASC LIMIT 20
+```
+
+where `?` is bound via `idCodec.toDbValues(cursorId)`. `limit` must be `> 0`.
+
+For non-ID orderings or ad-hoc queries, `Frag.keysetAfter` builds the
+portable `WHERE col > ? ORDER BY col ASC LIMIT n` fragment without a `Repo`:
+
+```scala mdoc:compile-only
+import zio.blocks.sql.*
+
+case class User(id: Int, name: String, email: String)
+import zio.blocks.schema.Schema
+object User { implicit val schema: Schema[User] = Schema.derived }
+val table: Table[User] = Table.derived[User]
+
+// Table-validated: rejects unknown columns
+val frag: Frag = Frag.keysetAfter(table, orderCol = "id", lastValue = DbValue.DbInt(42), limit = 20)
+// frag.sql(dialect) == " WHERE id > ? ORDER BY id ASC LIMIT 20"
+
+// Without a table: identifier-only validation
+val frag2: Frag = Frag.keysetAfter(orderCol = "created_at", lastValue = DbValue.DbLong(1000L), limit = 10)
+```
+
+- `Frag.keysetAfter(table, orderCol, lastValue, limit)` validates `orderCol`
+  with `SqlIdentifier.validate` and checks membership in `table.columns`;
+  unknown columns throw `IllegalArgumentException`.
+- `Frag.keysetAfter(orderCol, lastValue, limit)` validates the identifier only.
+- `limit` must be `> 0`; single-column cursors only (composite cursors are v2).
+
+Compose with a base `SELECT`:
+
+```scala mdoc:compile-only
+import zio.blocks.sql.*
+import zio.blocks.schema.Schema
+
+case class User(id: Int, name: String, email: String)
+object User { implicit val schema: Schema[User] = Schema.derived }
+val table: Table[User] = Table.derived[User]
+
+val base     = Frag.literal("SELECT id, name, email FROM user")
+val pageFrag = base ++ Frag.keysetAfter(table, "id", DbValue.DbInt(42), 20)
+// Rendering the SQL does not require a DbCon:
+val sql: String = pageFrag.sql(SqlDialect.SQLite) // SELECT id, name, email FROM user WHERE id > ? ORDER BY id ASC LIMIT 20
+// Executing needs givens at the call site:
+// given DbCon = ???
+// given DbCodec[User] = table.codec
+// val rows: List[User] = pageFrag.query[User]
+```
+
+## Inspecting SQL
+
+The custom interpreter above produces raw strings useful for debugging. When you work with the `sql` module's query IR (`zio.blocks.sql.query.SqlQuery`), you get richer inspection APIs.
+
+### explain(dialect): String
+
+The `explain` method renders the full SQL text with numbered parameter placeholders (`?1`, `?2`, ...) and a trailing comment listing each parameter's position and type:
+
+```scala
+import zio.blocks.sql._
+import zio.blocks.sql.query.{SqlQuery => Qry, Rel}
+
+val userTable = Table.derived[User]
+val repoTable = Table.derived[Repo]
+
+val q = Qry
+  .from(userTable)
+  .innerJoin(Rel(userTable, "id", repoTable, "owner_id"))
+  .filter(Frag(IndexedSeq("t0.\"name\" = ", ""), IndexedSeq(DbValue.DbString("alice"))))
+
+println(q.explain(SqlDialect.PostgreSQL))
+// SELECT t0."id", t0."name", t1."id", t1."owner_id", t1."name" FROM "user" AS t0 INNER JOIN "repo" AS t1 ON t0."id" = t1."owner_id" WHERE t0."name" = ?1
+// -- params: 1:String
+```
+
+`explain` renders a single-line SQL string with numbered `?N` placeholders (backed by `QueryRenderer.render`). The `?N`
+placeholders correspond one-to-one with the parameter list you can obtain separately via
+`statement(dialect).frag.params`. This makes `explain` useful for logging and visual debugging without touching a
+database.
+
+### statement(dialect): SqlStatement
+
+The `statement` method returns a structured `SqlStatement` that decomposes the query into its constituent parts:
+
+```scala
+val st = q.statement(SqlDialect.PostgreSQL)
+
+st.source      // Source(table = "user", alias = "t0")
+st.joins       // Vector(Join(Inner, "repo", "t1", ColumnRef("t0","id"), ColumnRef("t1","owner_id")))
+st.filters     // Vector(Filter(ColumnRef("t0","name"), "=", DbValue.DbString("alice")))
+st.groupBy     // None
+st.orderBy     // Vector.empty
+st.limit       // None
+st.offset      // None
+st.toFrag      // Frag (re-renderable to SQL)
+```
+
+`SqlStatement` lets you inspect joins, filters, ordering, and limits programmatically. This is useful for building monitoring dashboards, query analyzers, or dynamic query modification layers.
+
+### sql(dialect): String (Query IR)
+
+The query IR (`zio.blocks.sql.query.SqlQuery`) provides a `sql` method:
+
+```scala
+import zio.blocks.sql.query._
+
+val q = SqlQuery
+  .from(userTable)
+  .innerJoin(userToRepo)
+  .filter(frag"""t0."name" = ${DbValue.DbString("alice")}""")
+
+println(q.sql(SqlDialect.PostgreSQL))
+// SELECT t0."id", t0."name", t1."id", t1."owner_id", t1."name" FROM "user" AS t0 INNER JOIN "repo" AS t1 ON t0."id" = t1."owner_id" WHERE t0."name" = $1
+```
+
+### previewSql() for Migrations
+
+When using `SmallMigrator` or `LargeMigrator` from the `data-migration` module, `previewSql()` returns the full sequence of SQL statements the migrator would execute, without opening any database connection:
+
+```scala
+import zio.blocks.data.migration._
+
+given transactor: Transactor = tx
+
+val migrator = SmallMigrator(
+  repoV1 = userRepo,
+  repoV2 = userRepoV2,
+  migration = userMigration,
+  queueTable = "migration_queue",
+  batchSize = 100,
+  target = TargetStrategy.InPlace
+)
+
+val statements: Vector[String] = migrator.previewSql()
+// Vector(
+//   "CREATE TABLE ...",     -- queue DDL
+//   "CREATE TABLE ...",     -- shadow table
+//   "CREATE TRIGGER ...",   -- capture triggers
+//   "SELECT ...",           -- dequeue template
+//   "ALTER TABLE ..."       -- finalize (rename)
+// )
+```
+
+This gives you a dry run of the migration SQL before any schema changes are applied.
+
+## Compile-time SQL Dumps
+
+The `Dump` object emits SQL files at compile time. When the JVM property `zib.sql.dumpDir` is set, inline macro calls to `Dump.dumpTable` or `Dump.dumpQuery` write `.sql` files to that directory. When the property is absent, the calls become no-ops with zero runtime cost.
+
+### Enabling Dumps
+
+The `Dump` macros read `System.getProperty("zib.sql.dumpDir")` at compile time from the JVM running sbt's compiler. This is a JVM system property, not a scalac flag. Passing it via `scalacOptions` does nothing.
+
+The simplest way to set it is as a JVM flag on the sbt command line:
+
+```bash
+sbt -Dzib.sql.dumpDir=target/sql-dumps "++3.8.3; sqlJVM/compile"
+```
+
+If you prefer not to type `-D` every time, export it through `SBT_OPTS`:
+
+```bash
+SBT_OPTS="-Dzib.sql.dumpDir=target/sql-dumps" sbt compile
+```
+
+Both approaches set the property on the sbt process, which is the same JVM that runs the Scala compiler and the macros within it.
+
+### Entry Points
+
+There are two inline macro entry points, both in `zio.blocks.sql.Dump`:
+
+```scala
+import zio.blocks.sql._
+
+// Dump a Table's CREATE TABLE DDL (both PostgreSQL and SQLite)
+Dump.dumpTable(userTable)
+
+// Dump a query IR's SELECT
+Dump.dumpQuery(queryIr)
+```
+
+Each call emits one file per dialect (PostgreSQL and SQLite by default).
+
+### Naming Scheme
+
+Files are named `<owner>-<dialect>.sql` where `<owner>` is derived from the enclosing symbol and `<dialect>` is the lowercased dialect name:
+
+```
+target/sql-dumps/
+  user-postgresql.sql
+  user-sqlite.sql
+  repo-postgresql.sql
+  repo-sqlite.sql
+```
+
+For `dumpTable`, the owner comes from the `Table`'s type name. For `dump` and `dumpQuery`, the macro walks the call site to extract the enclosing method, val name, or argument name. If the macro cannot determine a meaningful name, it falls back to `query`.
+
+### Content-hash Skip
+
+Each dump file is written only when its content differs from the existing file. The macro compares the new bytes against any existing file at the target path. If they match, the write is skipped. This means incremental compilations do not produce noisy diffs or unnecessary filesystem writes.
+
+All files use UTF-8 encoding with a trailing newline.
+
+### Limitations
+
+Compile-time dumps work well for statically constructed queries, but some SQL patterns cannot be dumped:
+
+- **Dynamic `Frag` chains.** Fragments built at runtime from user input, database lookups, or conditional branching are invisible to the macro. Only the static structure known at compile time appears in the dump.
+- **Repo internals.** The `Repo` abstraction's generated queries (insert, update, delete, select-by-id) are assembled at runtime from the `DbCodec` and `Table` metadata. `Dump.dumpTable` captures the DDL, but the CRUD queries themselves are not emitted.
+- **Phase 2 note.** A future phase may extend `Dump` to cover `Repo`-level CRUD operations and dynamic fragment composition. For now, treat the dump as a DDL and static-query snapshot, not a complete representation of every SQL statement your application will execute.
+
+:::tip
+Pair `Dump.dumpTable` with `previewSql()` for a fuller picture: `dumpTable` captures the schema DDL at compile time, while `previewSql` captures the migration SQL at runtime before execution.
+:::
+
 ## Going Further
 
 - **[Part 1: Expressions](./query-dsl-reified-optics.md)** -- Building query expressions with reified optics
 - **[Part 3: Extending the Expression Language](./query-dsl-extending.md)** -- Adding custom operators (IN, BETWEEN, aggregates) beyond SchemaExpr
 - **[Part 4: A Fluent SQL Builder](./query-dsl-fluent-builder.md)** -- Type-safe SELECT, UPDATE, INSERT, DELETE with seamless condition mixing
-- **[SchemaExpr Reference](../reference/schema-expr.md)** -- Full API coverage of expression types
-- **[Optics Reference](../reference/optics.md)** -- Lens, Prism, Optional, and Traversal
-- **[DynamicOptic Reference](../reference/dynamic-optic.md)** -- Runtime optic paths for programmatic field extraction
+- **[SchemaExpr Reference](../reference/schema/schema-expr.md)** -- Full API coverage of expression types
+- **[Optics Reference](../reference/schema/optics.md)** -- Lens, Prism, Optional, and Traversal
+- **[DynamicOptic Reference](../reference/schema/dynamic-optic.md)** -- Runtime optic paths for programmatic field extraction
 
-The interpreter pattern shown here extends naturally to other query targets. Because `SchemaExpr` is a sealed trait and `DynamicOptic` carries full path metadata, you can write interpreters for MongoDB filters, Elasticsearch queries, GraphQL filters, or any other query language using the same approach: pattern match on the AST, map operators, and extract field names from optic paths.
+The interpreter pattern shown here extends naturally to other query targets. Because `SchemaExpr` wraps a `DynamicSchemaExpr` sealed trait and `DynamicOptic` carries full path metadata, you can write interpreters for MongoDB filters, Elasticsearch queries, GraphQL filters, or any other query language using the same approach: access `.dynamic`, pattern match on the AST, map operators, and extract field names from optic paths.

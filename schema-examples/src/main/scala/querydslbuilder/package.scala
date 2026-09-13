@@ -1,19 +1,3 @@
-/*
- * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package object querydslbuilder {
 
   import zio.blocks.schema._
@@ -57,6 +41,9 @@ package object querydslbuilder {
   def columnName(optic: zio.blocks.schema.Optic[_, _]): String =
     optic.toDynamic.nodes.collect { case f: DynamicOptic.Node.Field => f.name }.mkString("_")
 
+  def columnName(optic: DynamicOptic): String =
+    optic.nodes.collect { case f: DynamicOptic.Node.Field => f.name }.mkString("_")
+
   def tableName[S](schema: Schema[S]): String =
     schema.reflect.modifiers.collectFirst {
       case Modifier.config(key, value) if key == "sql.table_name" => value
@@ -86,13 +73,29 @@ package object querydslbuilder {
     }
   }
 
+  def sqlLiteralDV(dv: DynamicValue): String = dv match {
+    case DynamicValue.Primitive(pv) =>
+      pv match {
+        case PrimitiveValue.String(s)  => s"'${s.replace("'", "''")}'"
+        case PrimitiveValue.Boolean(b) => if (b) "TRUE" else "FALSE"
+        case PrimitiveValue.Int(n)     => n.toString
+        case PrimitiveValue.Long(n)    => n.toString
+        case PrimitiveValue.Double(n)  => n.toString
+        case PrimitiveValue.Float(n)   => n.toString
+        case PrimitiveValue.Short(n)   => n.toString
+        case PrimitiveValue.Byte(n)    => n.toString
+        case other                     => other.toString
+      }
+    case other => other.toString
+  }
+
   // ---------------------------------------------------------------------------
   // Single unified SQL interpreter
   // ---------------------------------------------------------------------------
 
   def exprToSql[S, A](expr: Expr[S, A]): String = expr match {
-    case Expr.Column(optic)      => columnName(optic)
-    case Expr.Lit(value, schema) => sqlLiteral(value, schema)
+    case Expr.Column(path) => columnName(path)
+    case Expr.Lit(value)   => sqlLiteralDV(value)
 
     case Expr.Relational(left, right, op) =>
       val sqlOp = op match {

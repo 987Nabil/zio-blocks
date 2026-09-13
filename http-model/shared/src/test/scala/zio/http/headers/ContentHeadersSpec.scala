@@ -1,8 +1,25 @@
-package zio.http.headers
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
-import zio.test._
+package zio.http
+
+import _root_.zio.test._
 import zio.blocks.chunk.Chunk
 import zio.blocks.mediatype.MediaTypes
+import Header._
 
 object ContentHeadersSpec extends ZIOSpecDefault {
   def spec: Spec[TestEnvironment, Any] = suite("ContentHeaders")(
@@ -156,6 +173,16 @@ object ContentHeadersSpec extends ZIOSpecDefault {
       },
       test("parse invalid form-data returns Left") {
         assertTrue(ContentDisposition.parse("form-data; invalid").isLeft)
+      },
+      test("smart constructors mirror explicit variants") {
+        assertTrue(
+          ContentDisposition.inline == ContentDisposition.Inline(None),
+          ContentDisposition.attachment == ContentDisposition.Attachment(None),
+          ContentDisposition.inline("image.png") == ContentDisposition.Inline(Some("image.png")),
+          ContentDisposition.attachment("file.txt") == ContentDisposition.Attachment(Some("file.txt")),
+          ContentDisposition.formData("field") == ContentDisposition.FormData("field", None),
+          ContentDisposition.formData("field", "doc.pdf") == ContentDisposition.FormData("field", Some("doc.pdf"))
+        )
       }
     ),
     suite("ContentLanguage")(

@@ -16,7 +16,8 @@
 
 package zio.blocks.schema.binding
 
-import zio.blocks.chunk.Chunk
+import zio.blocks.chunk.{Chunk, ChunkMap}
+import zio.blocks.maybe.Maybe
 import zio.blocks.schema.DynamicValue
 import zio.blocks.schema.binding.RegisterOffset.RegisterOffset
 import scala.annotation.unchecked.uncheckedVariance
@@ -251,6 +252,166 @@ object Binding extends BindingCompanionVersionSpecific {
       }
     )
 
+    val absent: Record[AnyRef] = new Record(
+      constructor = new Constructor[AnyRef] {
+        def usedRegisters: RegisterOffset = 0L
+
+        def construct(in: Registers, offset: RegisterOffset): AnyRef = null
+      },
+      deconstructor = new Deconstructor[AnyRef] {
+        def usedRegisters: RegisterOffset = 0L
+
+        def deconstruct(out: Registers, offset: RegisterOffset, in: AnyRef): Unit = ()
+      }
+    )
+
+    def present[A <: AnyRef]: Record[AnyRef] = new Record(
+      constructor = new Constructor[AnyRef] {
+        def usedRegisters: RegisterOffset = RegisterOffset(objects = 1)
+
+        def construct(in: Registers, offset: RegisterOffset): AnyRef = in.getObject(offset)
+      },
+      deconstructor = new Deconstructor[AnyRef] {
+        def usedRegisters: RegisterOffset = RegisterOffset(objects = 1)
+
+        def deconstruct(out: Registers, offset: RegisterOffset, in: AnyRef): Unit = out.setObject(offset, in)
+      }
+    )
+
+    val presentDouble: Record[AnyRef] = new Record(
+      constructor = new Constructor[AnyRef] {
+        def usedRegisters: RegisterOffset = RegisterOffset(doubles = 1)
+
+        def construct(in: Registers, offset: RegisterOffset): AnyRef =
+          java.lang.Double.valueOf(in.getDouble(offset))
+      },
+      deconstructor = new Deconstructor[AnyRef] {
+        def usedRegisters: RegisterOffset = RegisterOffset(doubles = 1)
+
+        def deconstruct(out: Registers, offset: RegisterOffset, in: AnyRef): Unit =
+          out.setDouble(offset, in.asInstanceOf[java.lang.Double].doubleValue())
+      }
+    )
+
+    val presentLong: Record[AnyRef] = new Record(
+      constructor = new Constructor[AnyRef] {
+        def usedRegisters: RegisterOffset = RegisterOffset(longs = 1)
+
+        def construct(in: Registers, offset: RegisterOffset): AnyRef =
+          java.lang.Long.valueOf(in.getLong(offset))
+      },
+      deconstructor = new Deconstructor[AnyRef] {
+        def usedRegisters: RegisterOffset = RegisterOffset(longs = 1)
+
+        def deconstruct(out: Registers, offset: RegisterOffset, in: AnyRef): Unit =
+          out.setLong(offset, in.asInstanceOf[java.lang.Long].longValue())
+      }
+    )
+
+    val presentFloat: Record[AnyRef] = new Record(
+      constructor = new Constructor[AnyRef] {
+        def usedRegisters: RegisterOffset = RegisterOffset(floats = 1)
+
+        def construct(in: Registers, offset: RegisterOffset): AnyRef =
+          java.lang.Float.valueOf(in.getFloat(offset))
+      },
+      deconstructor = new Deconstructor[AnyRef] {
+        def usedRegisters: RegisterOffset = RegisterOffset(floats = 1)
+
+        def deconstruct(out: Registers, offset: RegisterOffset, in: AnyRef): Unit =
+          out.setFloat(offset, in.asInstanceOf[java.lang.Float].floatValue())
+      }
+    )
+
+    val presentInt: Record[AnyRef] = new Record(
+      constructor = new Constructor[AnyRef] {
+        def usedRegisters: RegisterOffset = RegisterOffset(ints = 1)
+
+        def construct(in: Registers, offset: RegisterOffset): AnyRef =
+          java.lang.Integer.valueOf(in.getInt(offset))
+      },
+      deconstructor = new Deconstructor[AnyRef] {
+        def usedRegisters: RegisterOffset = RegisterOffset(ints = 1)
+
+        def deconstruct(out: Registers, offset: RegisterOffset, in: AnyRef): Unit =
+          out.setInt(offset, in.asInstanceOf[java.lang.Integer].intValue())
+      }
+    )
+
+    val presentChar: Record[AnyRef] = new Record(
+      constructor = new Constructor[AnyRef] {
+        def usedRegisters: RegisterOffset = RegisterOffset(chars = 1)
+
+        def construct(in: Registers, offset: RegisterOffset): AnyRef =
+          java.lang.Character.valueOf(in.getChar(offset))
+      },
+      deconstructor = new Deconstructor[AnyRef] {
+        def usedRegisters: RegisterOffset = RegisterOffset(chars = 1)
+
+        def deconstruct(out: Registers, offset: RegisterOffset, in: AnyRef): Unit =
+          out.setChar(offset, in.asInstanceOf[java.lang.Character].charValue())
+      }
+    )
+
+    val presentShort: Record[AnyRef] = new Record(
+      constructor = new Constructor[AnyRef] {
+        def usedRegisters: RegisterOffset = RegisterOffset(shorts = 1)
+
+        def construct(in: Registers, offset: RegisterOffset): AnyRef =
+          java.lang.Short.valueOf(in.getShort(offset))
+      },
+      deconstructor = new Deconstructor[AnyRef] {
+        def usedRegisters: RegisterOffset = RegisterOffset(shorts = 1)
+
+        def deconstruct(out: Registers, offset: RegisterOffset, in: AnyRef): Unit =
+          out.setShort(offset, in.asInstanceOf[java.lang.Short].shortValue())
+      }
+    )
+
+    val presentBoolean: Record[AnyRef] = new Record(
+      constructor = new Constructor[AnyRef] {
+        def usedRegisters: RegisterOffset = RegisterOffset(booleans = 1)
+
+        def construct(in: Registers, offset: RegisterOffset): AnyRef =
+          java.lang.Boolean.valueOf(in.getBoolean(offset))
+      },
+      deconstructor = new Deconstructor[AnyRef] {
+        def usedRegisters: RegisterOffset = RegisterOffset(booleans = 1)
+
+        def deconstruct(out: Registers, offset: RegisterOffset, in: AnyRef): Unit =
+          out.setBoolean(offset, in.asInstanceOf[java.lang.Boolean].booleanValue())
+      }
+    )
+
+    val presentByte: Record[AnyRef] = new Record(
+      constructor = new Constructor[AnyRef] {
+        def usedRegisters: RegisterOffset = RegisterOffset(bytes = 1)
+
+        def construct(in: Registers, offset: RegisterOffset): AnyRef =
+          java.lang.Byte.valueOf(in.getByte(offset))
+      },
+      deconstructor = new Deconstructor[AnyRef] {
+        def usedRegisters: RegisterOffset = RegisterOffset(bytes = 1)
+
+        def deconstruct(out: Registers, offset: RegisterOffset, in: AnyRef): Unit =
+          out.setByte(offset, in.asInstanceOf[java.lang.Byte].byteValue())
+      }
+    )
+
+    val presentUnit: Record[AnyRef] = new Record(
+      constructor = new Constructor[AnyRef] {
+        def usedRegisters: RegisterOffset = 0L
+
+        def construct(in: Registers, offset: RegisterOffset): AnyRef =
+          ().asInstanceOf[AnyRef]
+      },
+      deconstructor = new Deconstructor[AnyRef] {
+        def usedRegisters: RegisterOffset = 0L
+
+        def deconstruct(out: Registers, offset: RegisterOffset, in: AnyRef): Unit = ()
+      }
+    )
+
     def left[A, B]: Record[Left[A, B]] = new Record(
       constructor = new Constructor[Left[A, B]] {
         def usedRegisters: RegisterOffset = RegisterOffset(objects = 1)
@@ -280,6 +441,34 @@ object Binding extends BindingCompanionVersionSpecific {
           out.setObject(offset, in.value.asInstanceOf[AnyRef])
       }
     )
+
+    private[schema] def left[A, B](register: Register[A]): Record[Left[A, B]] =
+      (register match {
+        case _: Register.Int       => leftInt[B]
+        case _: Register.Long      => leftLong[B]
+        case _: Register.Float     => leftFloat[B]
+        case _: Register.Double    => leftDouble[B]
+        case _: Register.Boolean   => leftBoolean[B]
+        case _: Register.Byte      => leftByte[B]
+        case _: Register.Short     => leftShort[B]
+        case _: Register.Char      => leftChar[B]
+        case Register.Unit         => leftUnit[B]
+        case _: Register.Object[?] => left[A, B]
+      }).asInstanceOf[Record[Left[A, B]]]
+
+    private[schema] def right[A, B](register: Register[B]): Record[Right[A, B]] =
+      (register match {
+        case _: Register.Int       => rightInt[A]
+        case _: Register.Long      => rightLong[A]
+        case _: Register.Float     => rightFloat[A]
+        case _: Register.Double    => rightDouble[A]
+        case _: Register.Boolean   => rightBoolean[A]
+        case _: Register.Byte      => rightByte[A]
+        case _: Register.Short     => rightShort[A]
+        case _: Register.Char      => rightChar[A]
+        case Register.Unit         => rightUnit[A]
+        case _: Register.Object[?] => right[A, B]
+      }).asInstanceOf[Record[Right[A, B]]]
 
     def leftInt[B]: Record[Left[Int, B]] = new Record(
       constructor = new Constructor[Left[Int, B]] {
@@ -519,6 +708,16 @@ object Binding extends BindingCompanionVersionSpecific {
       )
     )
 
+    /**
+     * Creates the runtime discriminator and case matchers for `Either[A, B]`.
+     *
+     * @tparam A
+     *   the left value type
+     * @tparam B
+     *   the right value type
+     * @return
+     *   a variant binding whose cases are ordered as `Left`, then `Right`
+     */
     def either[A, B]: Variant[Either[A, B]] = new Variant(
       discriminator = new Discriminator[Either[A, B]] {
         def discriminate(a: Either[A, B]): Int = if (a.isLeft) 0 else 1
@@ -535,6 +734,29 @@ object Binding extends BindingCompanionVersionSpecific {
             case x: Right[A, B] @scala.unchecked => x
             case _                               => null.asInstanceOf[Right[A, B]]
           }
+        }
+      )
+    )
+
+    private[this] val absentSentinel: AnyRef = new AnyRef {}
+
+    def maybe[A]: Variant[AnyRef] = new Variant(
+      discriminator = new Discriminator[AnyRef] {
+        def discriminate(a: AnyRef): Int =
+          if (Maybe.unsafeIsAbsent(a.asInstanceOf[Maybe[Any]])) 0
+          else 1
+      },
+      matchers = Matchers(
+        new Matcher[AnyRef] {
+          override def downcastOrNull(any: Any): AnyRef =
+            if (Maybe.unsafeIsAbsent(any.asInstanceOf[Maybe[Any]])) absentSentinel
+            else null
+        },
+        new Matcher[AnyRef] {
+          override def downcastOrNull(any: Any): AnyRef =
+            if (!Maybe.unsafeIsAbsent(any.asInstanceOf[Maybe[Any]]))
+              Maybe.unsafeGet(any.asInstanceOf[Maybe[Any]]).asInstanceOf[AnyRef]
+            else null
         }
       )
     )
@@ -567,6 +789,8 @@ object Binding extends BindingCompanionVersionSpecific {
   ) extends Binding[BindingType.Map[M], M[K @uncheckedVariance, V @uncheckedVariance]]
 
   object Map {
+    def chunkMap[K, V]: Map[ChunkMap, K, V] = new Map(MapConstructor.chunkMap, MapDeconstructor.chunkMap)
+
     def map[K, V]: Map[Predef.Map, K, V] = new Map(MapConstructor.map, MapDeconstructor.map)
   }
 

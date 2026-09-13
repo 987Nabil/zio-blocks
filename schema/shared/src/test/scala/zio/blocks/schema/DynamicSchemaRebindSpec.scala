@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema
 
 import zio.blocks.schema.binding._
@@ -36,6 +52,16 @@ object DynamicSchemaRebindSpec extends SchemaBaseSpec {
   case class Config(settings: Map[String, Int])
   object Config {
     implicit val schema: Schema[Config] = Schema.derived[Config]
+  }
+
+  @Modifier.discriminator("type")
+  sealed trait AnnotatedAnimal
+  case class AnnotatedDog(name: String) extends AnnotatedAnimal
+  object AnnotatedDog {
+    implicit val schema: Schema[AnnotatedDog] = Schema.derived[AnnotatedDog]
+  }
+  object AnnotatedAnimal {
+    implicit val schema: Schema[AnnotatedAnimal] = Schema.derived[AnnotatedAnimal]
   }
 
   def spec: Spec[TestEnvironment, Any] = suite("DynamicSchemaRebindSpec")(
@@ -88,6 +114,21 @@ object DynamicSchemaRebindSpec extends SchemaBaseSpec {
         val result      = rebound.fromDynamicValue(dynamic)
 
         assertTrue(result == Right(dog))
+      },
+      test("preserves json modifiers through dynamic schema") {
+        val dynamicSchema   = Schema[AnnotatedAnimal].toDynamicSchema
+        val reboundRegistry = BindingResolver.defaults
+          .bind(Binding.of[AnnotatedAnimal])
+          .bind(Binding.of[AnnotatedDog])
+
+        val rebound                = dynamicSchema.rebind[AnnotatedAnimal](reboundRegistry)
+        val value: AnnotatedAnimal = AnnotatedDog("Buddy")
+
+        assertTrue(
+          dynamicSchema.reflect.modifiers.contains(Modifier.discriminator("type")),
+          rebound.reflect.modifiers.contains(Modifier.discriminator("type")),
+          rebound.fromDynamicValue(rebound.toDynamicValue(value)) == Right(value)
+        )
       },
       test("throws RebindException when binding is missing") {
         val dynamicSchema = Schema[Person].toDynamicSchema

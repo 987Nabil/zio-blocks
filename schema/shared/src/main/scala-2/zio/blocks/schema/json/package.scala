@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema
 
 import zio.blocks.schema.json._
@@ -23,81 +39,51 @@ private object JsonInterpolatorMacros {
         }
       case _ => c.abort(c.enclosingPosition, "Expected StringContext")
     }
-
-    // Detect interpolation contexts for type checking
     val contexts = ContextDetector.detectContexts(parts) match {
-      case Left(error)     => c.abort(c.enclosingPosition, s"Invalid JSON structure: $error")
       case Right(contexts) => contexts
+      case Left(error)     => c.abort(c.enclosingPosition, s"Invalid JSON structure: $error")
     }
-
-    // Validate and pre-encode args based on their context
-    val processedArgs: Seq[Tree] = if (args.size == contexts.size) {
-      contexts.zip(args).map { case (ctx, argExpr) =>
-        val argType = argExpr.actualType.widen
-        ctx match {
-          case InterpolationContext.Key =>
-            val keyableTc       = typeOf[Keyable[_]].typeConstructor
-            val keyableType     = appliedType(keyableTc, argType)
-            val keyableInstance = c.inferImplicitValue(keyableType, silent = true)
-            if (keyableInstance == EmptyTree) {
-              c.abort(
-                argExpr.tree.pos,
-                s"Type $argType cannot be used as JSON key. " +
-                  "Only keyable types (primitives, UUID, dates, etc.) are allowed."
-              )
-            }
-            // Pre-convert to String using Keyable
-            q"$keyableInstance.asKey(${argExpr.tree})"
-
-          case InterpolationContext.Value =>
-            val encoderTc       = typeOf[JsonEncoder[_]].typeConstructor
-            val encoderType     = appliedType(encoderTc, argType)
-            val encoderInstance = c.inferImplicitValue(encoderType, silent = true)
-            if (encoderInstance == EmptyTree) {
-              c.abort(
-                argExpr.tree.pos,
-                s"No JsonEncoder found for type $argType. " +
-                  "Add a Schema[T] or explicit JsonEncoder[T] instance."
-              )
-            }
-            // Pre-encode to Json using JsonEncoder, with null check
-            val v = c.freshName(TermName("v"))
-            q"""{
-              val $v = ${argExpr.tree}
-              if ($v.asInstanceOf[AnyRef] == null) _root_.zio.blocks.schema.json.Json.Null
-              else $encoderInstance.encode($v)
-            }"""
-
-          case InterpolationContext.InString =>
-            // Validate Keyable[A] for inside-string interpolation
-            val keyableTc       = typeOf[Keyable[_]].typeConstructor
-            val keyableType     = appliedType(keyableTc, argType)
-            val keyableInstance = c.inferImplicitValue(keyableType, silent = true)
-            if (keyableInstance == EmptyTree) {
-              c.abort(
-                argExpr.tree.pos,
-                s"Type $argType cannot be used inside a JSON string literal. " +
-                  "Only keyable types (primitives, UUID, dates, etc.) are allowed."
-              )
-            }
-            // Pre-convert to String using Keyable
-            q"$keyableInstance.asKey(${argExpr.tree})"
-        }
-      }
-    } else {
+    if (args.size != contexts.size) {
       c.abort(
         c.enclosingPosition,
         s"Internal error: context count mismatch (${contexts.size} contexts for ${args.size} args)"
       )
     }
-
-    // Convert contexts to runtime expression
+    val processedArgs = contexts.zip(args).map { case (ctx, argExpr) =>
+      val argType = argExpr.actualType.widen
+      if (argType <:< typeOf[Json]) {
+        ctx match {
+          case InterpolationContext.Value =>
+            val v = c.freshName(TermName("v"))
+            q"""{
+              val $v = ${argExpr.tree}
+              if ($v.asInstanceOf[AnyRef] eq null) _root_.zio.blocks.schema.json.Json.Null
+              else $v
+            }"""
+          case _ => q"Json.jsonCodec.encodeKey(${argExpr.tree})"
+        }
+      } else {
+        val schemaType     = appliedType(typeOf[Schema[_]].typeConstructor, argType)
+        val schemaInstance = c.inferImplicitValue(schemaType, silent = true)
+        if (schemaInstance == EmptyTree) c.abort(argExpr.tree.pos, s"No Schema found for type $argType.")
+        ctx match {
+          case InterpolationContext.Value =>
+            val v = c.freshName(TermName("v"))
+            q"""{
+              val $v = ${argExpr.tree}
+              if ($v.asInstanceOf[AnyRef] eq null) _root_.zio.blocks.schema.json.Json.Null
+              else $schemaInstance.jsonCodec.encodeValue($v)
+            }"""
+          case _ =>
+            q"$schemaInstance.jsonCodec.encodeKey(${argExpr.tree})"
+        }
+      }
+    }
     val contextsExpr = contexts.map {
       case InterpolationContext.Key      => q"_root_.zio.blocks.schema.json.InterpolationContext.Key"
       case InterpolationContext.Value    => q"_root_.zio.blocks.schema.json.InterpolationContext.Value"
       case InterpolationContext.InString => q"_root_.zio.blocks.schema.json.InterpolationContext.InString"
     }
-
     try {
       JsonInterpolatorRuntime.validateJsonLiteral(new StringContext(parts: _*), contexts)
       val scExpr     = c.Expr[StringContext](c.prefix.tree.asInstanceOf[Apply].args.head)

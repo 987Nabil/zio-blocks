@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.openapi
 
 import zio.blocks.chunk.{Chunk, ChunkBuilder, ChunkMap}
@@ -28,8 +44,8 @@ import zio.blocks.docs.{
   Text
 }
 import zio.blocks.docs.{Link => MdLink}
-import zio.blocks.schema.SchemaError
-import zio.blocks.schema.json.{Json, JsonDecoder, JsonEncoder}
+import zio.blocks.schema.Schema
+import zio.blocks.schema.json._
 
 object OpenAPICodec {
 
@@ -37,108 +53,94 @@ object OpenAPICodec {
   // Encoder helpers
   // ---------------------------------------------------------------------------
 
-  private def obj(fields: (String, Option[Json])*): Json.Object = {
+  private[this] def obj(fields: (String, Option[Json])*): Json.Object = {
     val builder = ChunkBuilder.make[(String, Json)](fields.length)
-    fields.foreach { case (k, v) => v.foreach(json => builder += (k -> json)) }
+    fields.foreach { case (k, v) => v.foreach(json => builder.addOne((k, json))) }
     new Json.Object(builder.result())
   }
 
-  private def withExtensions(base: Json.Object, extensions: ChunkMap[String, Json]): Json.Object =
+  private[this] def withExtensions(base: Json.Object, extensions: ChunkMap[String, Json]): Json.Object =
     if (extensions.isEmpty) base
-    else new Json.Object(base.value ++ Chunk.from(extensions))
+    else new Json.Object(base.value.appendedAll(extensions))
 
-  private def field[A](a: A)(implicit enc: JsonEncoder[A]): Option[Json] = Some(enc.encode(a))
+  private[this] def field[A](a: A)(implicit enc: JsonCodec[A]): Option[Json] = new Some(enc.encodeValue(a))
 
-  private def optField[A](a: Option[A])(implicit enc: JsonEncoder[A]): Option[Json] = a.map(enc.encode)
+  private[this] def optField[A](a: Option[A])(implicit enc: JsonCodec[A]): Option[Json] = a.map(enc.encodeValue)
 
-  private def chunkField[A](a: Chunk[A])(implicit enc: JsonEncoder[A]): Option[Json] =
+  private[this] def chunkField[A](a: Chunk[A])(implicit enc: JsonCodec[A]): Option[Json] =
     if (a.isEmpty) None
-    else {
-      val builder = ChunkBuilder.make[Json](a.length)
-      a.foreach(v => builder += enc.encode(v))
-      Some(new Json.Array(builder.result()))
-    }
+    else new Some(new Json.Array(a.map(v => enc.encodeValue(v))))
 
-  private def chunkMapField[V](a: ChunkMap[String, V])(implicit enc: JsonEncoder[V]): Option[Json] =
-    if (a.isEmpty) None else Some(JsonEncoder.mapEncoder(enc).encode(a))
+  private[this] def chunkMapField[V](a: ChunkMap[String, V])(implicit enc: JsonCodec[V]): Option[Json] =
+    if (a.isEmpty) None
+    else new Some(new Json.Object(a.toChunk.map(kv => (kv._1, enc.encodeValue(kv._2)))))
 
-  private def boolField(a: Boolean, default: Boolean = false): Option[Json] =
-    if (a == default) None else Some(Json.Boolean(a))
+  private[this] def boolField(a: Boolean, default: Boolean = false): Option[Json] =
+    if (a == default) None
+    else new Some(Json.Boolean(a))
 
   // ---------------------------------------------------------------------------
   // Decoder helpers
   // ---------------------------------------------------------------------------
 
-  private def getField(jObj: Json.Object, name: String): Option[Json] =
-    jObj.value.find(_._1 == name).map(_._2)
+  private[this] def getField(jObj: Json.Object, name: String): Option[Json] =
+    jObj.value.collectFirst { case kv if kv._1 == name => kv._2 }
 
-  private def reqField[A](jObj: Json.Object, name: String)(implicit dec: JsonDecoder[A]): Either[SchemaError, A] =
+  private[this] def reqField[A](jObj: Json.Object, name: String)(implicit dec: JsonCodec[A]): A =
     getField(jObj, name) match {
-      case Some(json) => dec.decode(json)
-      case None       => Left(SchemaError(s"Missing required field: $name"))
+      case Some(json) => dec.decodeValue(json)
+      case _          => throw new JsonCodecError(Nil, s"Missing required field: $name")
     }
 
-  private def optFieldDec[A](jObj: Json.Object, name: String)(implicit
-    dec: JsonDecoder[A]
-  ): Either[SchemaError, Option[A]] =
+  private[this] def optFieldDec[A](jObj: Json.Object, name: String)(implicit
+    dec: JsonCodec[A]
+  ): Option[A] =
     getField(jObj, name) match {
-      case Some(Json.Null) | None => Right(None)
-      case Some(json)             => dec.decode(json).map(Some(_))
+      case Some(Json.Null) | None => None
+      case Some(json)             => new Some(dec.decodeValue(json))
     }
 
-  private def chunkFieldDec[A](jObj: Json.Object, name: String)(implicit
-    dec: JsonDecoder[A]
-  ): Either[SchemaError, Chunk[A]] =
+  private[this] def chunkFieldDec[A](jObj: Json.Object, name: String)(implicit dec: JsonCodec[A]): Chunk[A] =
     getField(jObj, name) match {
-      case None                  => Right(Chunk.empty)
-      case Some(arr: Json.Array) =>
-        val builder                             = ChunkBuilder.make[A](arr.value.length)
-        var error: Either[SchemaError, Nothing] = null
-        arr.value.foreach { v =>
-          if (error == null) {
-            dec.decode(v) match {
-              case Right(r) => builder += r
-              case Left(e)  => error = Left(e)
-            }
-          }
-        }
-        if (error != null) error.asInstanceOf[Either[SchemaError, Chunk[A]]]
-        else Right(builder.result())
-      case Some(json) => JsonDecoder.listDecoder(dec).decode(json).map(l => Chunk.from(l))
+      case None                  => Chunk.empty
+      case Some(arr: Json.Array) => arr.value.map(v => dec.decodeValue(v))
+      case _                     => throw new JsonCodecError(Nil, s"Expected Json.Array for field: $name")
     }
 
-  private def chunkMapFieldDec[V](jObj: Json.Object, name: String)(implicit
-    dec: JsonDecoder[V]
-  ): Either[SchemaError, ChunkMap[String, V]] =
+  private[this] def chunkMapFieldDec[V](jObj: Json.Object, name: String)(implicit
+    dec: JsonCodec[V]
+  ): ChunkMap[String, V] =
     getField(jObj, name) match {
-      case None                   => Right(ChunkMap.empty)
+      case None                   => ChunkMap.empty
       case Some(obj: Json.Object) =>
-        val builder                             = ChunkMap.newBuilder[String, V]
-        var error: Either[SchemaError, Nothing] = null
-        obj.value.foreach { case (k, v) =>
-          if (error == null) {
-            dec.decode(v) match {
-              case Right(r) => builder += (k -> r)
-              case Left(e)  => error = Left(e)
-            }
-          }
-        }
-        if (error != null) error.asInstanceOf[Either[SchemaError, ChunkMap[String, V]]]
-        else Right(builder.result())
-      case Some(_) => Left(SchemaError(s"Expected Object for field: $name"))
+        val builder = ChunkMap.newBuilder[String, V]
+        obj.value.foreach(kv => builder.addOne((kv._1, dec.decodeValue(kv._2))))
+        builder.result()
+      case _ => throw new JsonCodecError(Nil, s"Expected Json.Object for field: $name")
     }
 
-  private def boolFieldDec(jObj: Json.Object, name: String, default: Boolean = false): Either[SchemaError, Boolean] =
+  private[this] def boolFieldDec(jObj: Json.Object, name: String, default: Boolean = false): Boolean =
     getField(jObj, name) match {
-      case None       => Right(default)
-      case Some(json) => JsonDecoder.booleanDecoder.decode(json)
+      case Some(json) => JsonCodec.booleanCodec.decodeValue(json)
+      case _          => default
     }
 
-  private def extractExtensions(jObj: Json.Object): ChunkMap[String, Json] = {
+  private[this] def extractExtensions(jObj: Json.Object): ChunkMap[String, Json] = {
     val builder = ChunkMap.newBuilder[String, Json]
     jObj.value.foreach { case (k, v) => if (k.startsWith("x-")) builder += (k -> v) }
     builder.result()
   }
+
+  private[this] def optBoolField(a: Option[Boolean]): Option[Json] = a match {
+    case Some(b) => new Some(Json.Boolean(b))
+    case _       => None
+  }
+
+  private[this] def optBoolFieldDec(jObj: Json.Object, name: String): Option[Boolean] =
+    getField(jObj, name) match {
+      case Some(json) => new Some(JsonCodec.booleanCodec.decodeValue(json))
+      case _          => None
+    }
 
   // ---------------------------------------------------------------------------
   // Doc normalization helpers
@@ -151,49 +153,47 @@ object OpenAPICodec {
    * This is necessary because Parser.parse() creates top-level Text, Code, etc.
    * instances, but DocsSchemas expects Inline.Text, Inline.Code, etc.
    */
-  private def normalizeDoc(doc: Doc): Doc =
-    Doc(doc.blocks.map(normalizeBlock), doc.metadata)
+  private[this] def normalizeDoc(doc: Doc): Doc = Doc(doc.blocks.map(normalizeBlock), doc.metadata)
 
-  private def normalizeBlock(block: Block): Block = block match {
-    case Paragraph(content)               => Paragraph(normalizeInlines(content))
-    case Heading(level, content)          => Heading(level, normalizeInlines(content))
-    case BlockQuote(content)              => BlockQuote(content.map(normalizeBlock))
-    case BulletList(items, tight)         => BulletList(items.map(normalizeListItem), tight)
-    case OrderedList(start, items, tight) => OrderedList(start, items.map(normalizeListItem), tight)
-    case ListItem(content, checked)       => ListItem(content.map(normalizeBlock), checked)
-    case Table(header, alignments, rows)  => Table(normalizeTableRow(header), alignments, rows.map(normalizeTableRow))
-    case other                            => other // CodeBlock, ThematicBreak, HtmlBlock unchanged
+  private[this] def normalizeBlock(block: Block): Block = block match {
+    case Paragraph(content)               => new Paragraph(normalizeInlines(content))
+    case Heading(level, content)          => new Heading(level, normalizeInlines(content))
+    case BlockQuote(content)              => new BlockQuote(content.map(normalizeBlock))
+    case BulletList(items, tight)         => new BulletList(items.map(normalizeListItem), tight)
+    case OrderedList(start, items, tight) => new OrderedList(start, items.map(normalizeListItem), tight)
+    case ListItem(content, checked)       => new ListItem(content.map(normalizeBlock), checked)
+    case Table(header, alignments, rows)  =>
+      new Table(normalizeTableRow(header), alignments, rows.map(normalizeTableRow))
+    case other => other // CodeBlock, ThematicBreak, HtmlBlock unchanged
   }
 
-  private def normalizeListItem(item: ListItem): ListItem =
+  private[this] def normalizeListItem(item: ListItem): ListItem =
     ListItem(item.content.map(normalizeBlock), item.checked)
 
-  private def normalizeTableRow(row: TableRow): TableRow =
-    TableRow(row.cells.map(normalizeInlines))
+  private[this] def normalizeTableRow(row: TableRow): TableRow = TableRow(row.cells.map(normalizeInlines))
 
-  private def normalizeInlines(inlines: Chunk[Inline]): Chunk[Inline] =
-    inlines.map(normalizeInline)
+  private[this] def normalizeInlines(inlines: Chunk[Inline]): Chunk[Inline] = inlines.map(normalizeInline)
 
-  private def normalizeInline(inline: Inline): Inline = inline match {
+  private[this] def normalizeInline(inline: Inline): Inline = inline match {
     // Convert top-level types to Inline.* types
-    case t: Text           => Inline.Text(t.value)
-    case c: Code           => Inline.Code(c.value)
-    case e: Emphasis       => Inline.Emphasis(normalizeInlines(e.content))
-    case s: Strong         => Inline.Strong(normalizeInlines(s.content))
-    case st: Strikethrough => Inline.Strikethrough(normalizeInlines(st.content))
-    case l: MdLink         => Inline.Link(normalizeInlines(l.text), l.url, l.title)
-    case i: Image          => Inline.Image(i.alt, i.url, i.title)
-    case h: HtmlInline     => Inline.HtmlInline(h.content)
+    case t: Text           => new Inline.Text(t.value)
+    case c: Code           => new Inline.Code(c.value)
+    case e: Emphasis       => new Inline.Emphasis(normalizeInlines(e.content))
+    case s: Strong         => new Inline.Strong(normalizeInlines(s.content))
+    case st: Strikethrough => new Inline.Strikethrough(normalizeInlines(st.content))
+    case l: MdLink         => new Inline.Link(normalizeInlines(l.text), l.url, l.title)
+    case i: Image          => new Inline.Image(i.alt, i.url, i.title)
+    case h: HtmlInline     => new Inline.HtmlInline(h.content)
     case SoftBreak         => Inline.SoftBreak
     case HardBreak         => Inline.HardBreak
-    case a: Autolink       => Inline.Autolink(a.url, a.isEmail)
+    case a: Autolink       => new Inline.Autolink(a.url, a.isEmail)
     // Inline.* types are already correct, pass through
     case it: Inline.Text           => it
     case ic: Inline.Code           => ic
-    case ie: Inline.Emphasis       => Inline.Emphasis(normalizeInlines(ie.content))
-    case is: Inline.Strong         => Inline.Strong(normalizeInlines(is.content))
-    case ist: Inline.Strikethrough => Inline.Strikethrough(normalizeInlines(ist.content))
-    case il: Inline.Link           => Inline.Link(normalizeInlines(il.text), il.url, il.title)
+    case ie: Inline.Emphasis       => new Inline.Emphasis(normalizeInlines(ie.content))
+    case is: Inline.Strong         => new Inline.Strong(normalizeInlines(is.content))
+    case ist: Inline.Strikethrough => new Inline.Strikethrough(normalizeInlines(ist.content))
+    case il: Inline.Link           => new Inline.Link(normalizeInlines(il.text), il.url, il.title)
     case ii: Inline.Image          => ii
     case ih: Inline.HtmlInline     => ih
     case Inline.SoftBreak          => Inline.SoftBreak
@@ -201,232 +201,194 @@ object OpenAPICodec {
     case ia: Inline.Autolink       => ia
   }
 
-  // ---------------------------------------------------------------------------
-  // Doc
-  // ---------------------------------------------------------------------------
+  private abstract class JsonASTCodec[A] extends JsonCodec[A] {
+    def decodeValue(in: JsonReader): A = ???
 
-  implicit val docJsonEncoder: JsonEncoder[Doc] = JsonEncoder.instance[Doc] { doc =>
-    Json.String(Renderer.render(doc))
+    def encodeValue(x: A, out: JsonWriter): Unit = ???
   }
 
-  implicit val docJsonDecoder: JsonDecoder[Doc] = JsonDecoder.instance[Doc] { json =>
-    json match {
+  private[openapi] implicit val jsonCodec: JsonCodec[Json]     = Json.jsonCodec
+  private[openapi] implicit val stringCodec: JsonCodec[String] = Schema[String].jsonCodec
+  private[openapi] implicit val docCodec: JsonCodec[Doc]       = new JsonASTCodec[Doc] {
+    override def decodeValue(json: Json): Doc = json match {
       case str: Json.String =>
         Parser.parse(str.value) match {
-          case Right(doc) => Right(normalizeDoc(doc))
-          case Left(_)    => Right(Doc(Chunk(Paragraph(Chunk(Inline.Text(str.value))))))
+          case Right(doc) => normalizeDoc(doc)
+          case _          => new Doc(Chunk.single(new Paragraph(Chunk.single(new Inline.Text(str.value)))))
         }
-      case _ => Left(SchemaError("Expected String for Doc"))
+      case _ => error("Expected String for Doc")
     }
+
+    override def encodeValue(x: Doc): Json = new Json.String(Renderer.render(x))
   }
+  private[openapi] implicit val contactCodec: JsonCodec[Contact] = new JsonASTCodec[Contact] {
+    override def decodeValue(json: Json): Contact = json match {
+      case jObj: Json.Object =>
+        new Contact(
+          optFieldDec[String](jObj, "name"),
+          optFieldDec[String](jObj, "url"),
+          optFieldDec[String](jObj, "email"),
+          extractExtensions(jObj)
+        )
+      case _ => error("Expected Json.Object for Contact")
+    }
 
-  // ---------------------------------------------------------------------------
-  // Contact
-  // ---------------------------------------------------------------------------
-
-  implicit val contactJsonEncoder: JsonEncoder[Contact] = JsonEncoder.instance[Contact] { c =>
-    withExtensions(
+    override def encodeValue(x: Contact): Json = withExtensions(
       obj(
-        "name"  -> optField(c.name),
-        "url"   -> optField(c.url),
-        "email" -> optField(c.email)
+        "name"  -> optField(x.name),
+        "url"   -> optField(x.url),
+        "email" -> optField(x.email)
       ),
-      c.extensions
+      x.extensions
     )
   }
-
-  implicit val contactJsonDecoder: JsonDecoder[Contact] = JsonDecoder.instance[Contact] { json =>
-    json match {
+  private[openapi] implicit val licenseCodec: JsonCodec[License] = new JsonASTCodec[License] {
+    override def decodeValue(json: Json): License = json match {
       case jObj: Json.Object =>
-        for {
-          name  <- optFieldDec[String](jObj, "name")
-          url   <- optFieldDec[String](jObj, "url")
-          email <- optFieldDec[String](jObj, "email")
-        } yield Contact(name, url, email, extractExtensions(jObj))
-      case _ => Left(SchemaError("Expected Object for Contact"))
+        new License(
+          reqField[String](jObj, "name"),
+          optFieldDec[String](jObj, "identifier"),
+          optFieldDec[String](jObj, "url"),
+          extractExtensions(jObj)
+        )
+      case _ => error("Expected Json.Object for License")
     }
-  }
 
-  // ---------------------------------------------------------------------------
-  // License
-  // ---------------------------------------------------------------------------
-
-  implicit val licenseJsonEncoder: JsonEncoder[License] = JsonEncoder.instance[License] { l =>
-    val identifierOpt = l.identifierOrUrl.flatMap(_.left.toOption)
-    val urlOpt        = l.identifierOrUrl.flatMap(_.toOption)
-    withExtensions(
+    override def encodeValue(x: License): Json = withExtensions(
       obj(
-        "name"       -> field(l.name),
-        "identifier" -> optField(identifierOpt),
-        "url"        -> optField(urlOpt)
+        "name"       -> field(x.name),
+        "identifier" -> optField(x.identifier),
+        "url"        -> optField(x.url)
       ),
-      l.extensions
+      x.extensions
     )
   }
+  private[openapi] implicit val externalDocumentationCodec: JsonCodec[ExternalDocumentation] =
+    new JsonASTCodec[ExternalDocumentation] {
+      override def decodeValue(json: Json): ExternalDocumentation = json match {
+        case jObj: Json.Object =>
+          new ExternalDocumentation(
+            reqField[String](jObj, "url"),
+            optFieldDec[Doc](jObj, "description"),
+            extractExtensions(jObj)
+          )
+        case _ => error("Expected Json.Object for ExternalDocumentation")
+      }
 
-  implicit val licenseJsonDecoder: JsonDecoder[License] = JsonDecoder.instance[License] { json =>
-    json match {
-      case jObj: Json.Object =>
-        for {
-          name       <- reqField[String](jObj, "name")
-          identifier <- optFieldDec[String](jObj, "identifier")
-          url        <- optFieldDec[String](jObj, "url")
-        } yield License(name, identifier, url, extractExtensions(jObj))
-      case _ => Left(SchemaError("Expected Object for License"))
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // ExternalDocumentation
-  // ---------------------------------------------------------------------------
-
-  implicit val externalDocumentationJsonEncoder: JsonEncoder[ExternalDocumentation] =
-    JsonEncoder.instance[ExternalDocumentation] { ed =>
-      withExtensions(
+      override def encodeValue(x: ExternalDocumentation): Json = withExtensions(
         obj(
-          "url"         -> field(ed.url),
-          "description" -> optField(ed.description)(docJsonEncoder)
+          "url"         -> field(x.url),
+          "description" -> optField(x.description)
         ),
-        ed.extensions
+        x.extensions
       )
     }
-
-  implicit val externalDocumentationJsonDecoder: JsonDecoder[ExternalDocumentation] =
-    JsonDecoder.instance[ExternalDocumentation] { json =>
-      json match {
-        case jObj: Json.Object =>
-          for {
-            url         <- reqField[String](jObj, "url")
-            description <- optFieldDec[Doc](jObj, "description")(docJsonDecoder)
-          } yield ExternalDocumentation(url, description, extractExtensions(jObj))
-        case _ => Left(SchemaError("Expected Object for ExternalDocumentation"))
-      }
+  private[openapi] implicit val serverVariableCodec: JsonCodec[ServerVariable] = new JsonASTCodec[ServerVariable] {
+    override def decodeValue(json: Json): ServerVariable = json match {
+      case jObj: Json.Object =>
+        new ServerVariable(
+          reqField[String](jObj, "default"),
+          chunkFieldDec[String](jObj, "enum"),
+          optFieldDec[Doc](jObj, "description"),
+          extractExtensions(jObj)
+        )
+      case _ => error("Expected Json.Object for ServerVariable")
     }
 
-  // ---------------------------------------------------------------------------
-  // ServerVariable
-  // ---------------------------------------------------------------------------
-
-  implicit val serverVariableJsonEncoder: JsonEncoder[ServerVariable] =
-    JsonEncoder.instance[ServerVariable] { sv =>
-      withExtensions(
-        obj(
-          "default"     -> field(sv.default),
-          "enum"        -> chunkField(sv.`enum`),
-          "description" -> optField(sv.description)(docJsonEncoder)
-        ),
-        sv.extensions
-      )
-    }
-
-  implicit val serverVariableJsonDecoder: JsonDecoder[ServerVariable] =
-    JsonDecoder.instance[ServerVariable] { json =>
-      json match {
-        case jObj: Json.Object =>
-          for {
-            default     <- reqField[String](jObj, "default")
-            enumValues  <- chunkFieldDec[String](jObj, "enum")
-            description <- optFieldDec[Doc](jObj, "description")(docJsonDecoder)
-          } yield ServerVariable(default, enumValues, description, extractExtensions(jObj))
-        case _ => Left(SchemaError("Expected Object for ServerVariable"))
-      }
-    }
-
-  // ---------------------------------------------------------------------------
-  // Server
-  // ---------------------------------------------------------------------------
-
-  implicit val serverJsonEncoder: JsonEncoder[Server] = JsonEncoder.instance[Server] { s =>
-    withExtensions(
+    override def encodeValue(x: ServerVariable): Json = withExtensions(
       obj(
-        "url"         -> field(s.url),
-        "description" -> optField(s.description)(docJsonEncoder),
-        "variables"   -> chunkMapField(s.variables)(serverVariableJsonEncoder)
+        "default"     -> field(x.default),
+        "enum"        -> chunkField(x.`enum`),
+        "description" -> optField(x.description)
       ),
-      s.extensions
+      x.extensions
     )
   }
-
-  implicit val serverJsonDecoder: JsonDecoder[Server] = JsonDecoder.instance[Server] { json =>
-    json match {
+  private[openapi] implicit val serverCodec: JsonCodec[Server] = new JsonASTCodec[Server] {
+    override def decodeValue(json: Json): Server = json match {
       case jObj: Json.Object =>
-        for {
-          url         <- reqField[String](jObj, "url")
-          description <- optFieldDec[Doc](jObj, "description")(docJsonDecoder)
-          variables   <- chunkMapFieldDec[ServerVariable](jObj, "variables")(serverVariableJsonDecoder)
-        } yield Server(url, description, variables, extractExtensions(jObj))
-      case _ => Left(SchemaError("Expected Object for Server"))
+        new Server(
+          reqField[String](jObj, "url"),
+          optFieldDec[Doc](jObj, "description"),
+          chunkMapFieldDec[ServerVariable](jObj, "variables"),
+          extractExtensions(jObj)
+        )
+      case _ => error("Expected Json.Object for Server")
     }
-  }
 
-  // ---------------------------------------------------------------------------
-  // Tag
-  // ---------------------------------------------------------------------------
-
-  implicit val tagJsonEncoder: JsonEncoder[Tag] = JsonEncoder.instance[Tag] { t =>
-    withExtensions(
+    override def encodeValue(x: Server): Json = withExtensions(
       obj(
-        "name"         -> field(t.name),
-        "description"  -> optField(t.description)(docJsonEncoder),
-        "externalDocs" -> optField(t.externalDocs)(externalDocumentationJsonEncoder)
+        "url"         -> field(x.url),
+        "description" -> optField(x.description),
+        "variables"   -> chunkMapField(x.variables)
       ),
-      t.extensions
+      x.extensions
     )
   }
-
-  implicit val tagJsonDecoder: JsonDecoder[Tag] = JsonDecoder.instance[Tag] { json =>
-    json match {
+  private[openapi] implicit val tagCodec: JsonCodec[Tag] = new JsonASTCodec[Tag] {
+    override def decodeValue(json: Json): Tag = json match {
       case jObj: Json.Object =>
-        for {
-          name         <- reqField[String](jObj, "name")
-          description  <- optFieldDec[Doc](jObj, "description")(docJsonDecoder)
-          externalDocs <- optFieldDec[ExternalDocumentation](jObj, "externalDocs")(externalDocumentationJsonDecoder)
-        } yield Tag(name, description, externalDocs, extractExtensions(jObj))
-      case _ => Left(SchemaError("Expected Object for Tag"))
+        new Tag(
+          reqField[String](jObj, "name"),
+          optFieldDec[Doc](jObj, "description"),
+          optFieldDec[ExternalDocumentation](jObj, "externalDocs"),
+          extractExtensions(jObj)
+        )
+      case _ => error("Expected Json.Object for Tag")
     }
+
+    override def encodeValue(x: Tag): Json = withExtensions(
+      obj(
+        "name"         -> field(x.name),
+        "description"  -> optField(x.description),
+        "externalDocs" -> optField(x.externalDocs)
+      ),
+      x.extensions
+    )
   }
+  private[openapi] implicit val infoCodec: JsonCodec[Info] = new JsonASTCodec[Info] { info =>
+    override def decodeValue(json: Json): Info = json match {
+      case jObj: Json.Object =>
+        new Info(
+          reqField[String](jObj, "title"),
+          reqField[String](jObj, "version"),
+          optFieldDec[Doc](jObj, "summary"),
+          optFieldDec[Doc](jObj, "description"),
+          optFieldDec[String](jObj, "termsOfService"),
+          optFieldDec[Contact](jObj, "contact"),
+          optFieldDec[License](jObj, "license"),
+          extractExtensions(jObj)
+        )
+      case _ => error("Expected Json.Object for Info")
+    }
 
-  // ---------------------------------------------------------------------------
-  // Info
-  // ---------------------------------------------------------------------------
-
-  implicit val infoJsonEncoder: JsonEncoder[Info] = JsonEncoder.instance[Info] { info =>
-    withExtensions(
+    override def encodeValue(info: Info): Json = withExtensions(
       obj(
         "title"          -> field(info.title),
         "version"        -> field(info.version),
-        "summary"        -> optField(info.summary)(docJsonEncoder),
-        "description"    -> optField(info.description)(docJsonEncoder),
+        "summary"        -> optField(info.summary),
+        "description"    -> optField(info.description),
         "termsOfService" -> optField(info.termsOfService),
-        "contact"        -> optField(info.contact)(contactJsonEncoder),
-        "license"        -> optField(info.license)(licenseJsonEncoder)
+        "contact"        -> optField(info.contact),
+        "license"        -> optField(info.license)
       ),
       info.extensions
     )
   }
-
-  implicit val infoJsonDecoder: JsonDecoder[Info] = JsonDecoder.instance[Info] { json =>
-    json match {
+  private[openapi] implicit val xmlCodec: JsonCodec[XML] = new JsonASTCodec[XML] {
+    override def decodeValue(json: Json): XML = json match {
       case jObj: Json.Object =>
-        for {
-          title          <- reqField[String](jObj, "title")
-          version        <- reqField[String](jObj, "version")
-          summary        <- optFieldDec[Doc](jObj, "summary")(docJsonDecoder)
-          description    <- optFieldDec[Doc](jObj, "description")(docJsonDecoder)
-          termsOfService <- optFieldDec[String](jObj, "termsOfService")
-          contact        <- optFieldDec[Contact](jObj, "contact")(contactJsonDecoder)
-          license        <- optFieldDec[License](jObj, "license")(licenseJsonDecoder)
-        } yield Info(title, version, summary, description, termsOfService, contact, license, extractExtensions(jObj))
-      case _ => Left(SchemaError("Expected Object for Info"))
+        new XML(
+          optFieldDec[String](jObj, "name"),
+          optFieldDec[String](jObj, "namespace"),
+          optFieldDec[String](jObj, "prefix"),
+          boolFieldDec(jObj, "attribute"),
+          boolFieldDec(jObj, "wrapped")
+        )
+      case _ => error("Expected Json.Object for XML")
     }
-  }
 
-  // ---------------------------------------------------------------------------
-  // XML
-  // ---------------------------------------------------------------------------
-
-  implicit val xmlJsonEncoder: JsonEncoder[XML] = JsonEncoder.instance[XML] { x =>
-    obj(
+    override def encodeValue(x: XML): Json = obj(
       "name"      -> optField(x.name),
       "namespace" -> optField(x.namespace),
       "prefix"    -> optField(x.prefix),
@@ -434,221 +396,184 @@ object OpenAPICodec {
       "wrapped"   -> boolField(x.wrapped)
     )
   }
-
-  implicit val xmlJsonDecoder: JsonDecoder[XML] = JsonDecoder.instance[XML] { json =>
-    json match {
+  private[openapi] implicit val discriminatorCodec: JsonCodec[Discriminator] = new JsonASTCodec[Discriminator] {
+    override def decodeValue(json: Json): Discriminator = json match {
       case jObj: Json.Object =>
-        for {
-          name      <- optFieldDec[String](jObj, "name")
-          namespace <- optFieldDec[String](jObj, "namespace")
-          prefix    <- optFieldDec[String](jObj, "prefix")
-          attribute <- boolFieldDec(jObj, "attribute")
-          wrapped   <- boolFieldDec(jObj, "wrapped")
-        } yield XML(name, namespace, prefix, attribute, wrapped)
-      case _ => Left(SchemaError("Expected Object for XML"))
+        new Discriminator(
+          reqField[String](jObj, "propertyName"),
+          chunkMapFieldDec[String](jObj, "mapping")
+        )
+      case _ => error("Expected Json.Object for Discriminator")
     }
-  }
 
-  // ---------------------------------------------------------------------------
-  // Discriminator
-  // ---------------------------------------------------------------------------
-
-  implicit val discriminatorJsonEncoder: JsonEncoder[Discriminator] = JsonEncoder.instance[Discriminator] { d =>
-    obj(
-      "propertyName" -> field(d.propertyName),
-      "mapping"      -> chunkMapField(d.mapping)
+    override def encodeValue(x: Discriminator): Json = obj(
+      "propertyName" -> field(x.propertyName),
+      "mapping"      -> chunkMapField(x.mapping)
     )
   }
+  private[openapi] implicit val parameterLocationCodec: JsonCodec[ParameterLocation] =
+    new JsonASTCodec[ParameterLocation] {
+      override def decodeValue(json: Json): ParameterLocation = json match {
+        case str: Json.String =>
+          str.value match {
+            case "query"  => ParameterLocation.Query
+            case "header" => ParameterLocation.Header
+            case "path"   => ParameterLocation.Path
+            case "cookie" => ParameterLocation.Cookie
+            case other    => error(s"Invalid parameter location: $other")
+          }
+        case _ => error("Expected String for ParameterLocation")
+      }
 
-  implicit val discriminatorJsonDecoder: JsonDecoder[Discriminator] = JsonDecoder.instance[Discriminator] { json =>
-    json match {
-      case jObj: Json.Object =>
-        for {
-          propertyName <- reqField[String](jObj, "propertyName")
-          mapping      <- chunkMapFieldDec[String](jObj, "mapping")
-        } yield Discriminator(propertyName, mapping)
-      case _ => Left(SchemaError("Expected Object for Discriminator"))
+      override def encodeValue(x: ParameterLocation): Json = new Json.String(x match {
+        case ParameterLocation.Query  => "query"
+        case ParameterLocation.Header => "header"
+        case ParameterLocation.Path   => "path"
+        case ParameterLocation.Cookie => "cookie"
+      })
     }
+  private[openapi] implicit val apiKeyLocationCodec: JsonCodec[APIKeyLocation] = new JsonASTCodec[APIKeyLocation] {
+    override def decodeValue(json: Json): APIKeyLocation = json match {
+      case str: Json.String =>
+        str.value match {
+          case "query"  => APIKeyLocation.Query
+          case "header" => APIKeyLocation.Header
+          case "cookie" => APIKeyLocation.Cookie
+          case other    => error(s"Invalid API key location: $other")
+        }
+      case _ => error("Expected String for APIKeyLocation")
+    }
+
+    override def encodeValue(x: APIKeyLocation): Json = new Json.String(x match {
+      case APIKeyLocation.Query  => "query"
+      case APIKeyLocation.Header => "header"
+      case APIKeyLocation.Cookie => "cookie"
+    })
   }
-
-  // ---------------------------------------------------------------------------
-  // Optional Boolean helpers
-  // ---------------------------------------------------------------------------
-
-  private def optBoolField(a: Option[Boolean]): Option[Json] = a.map(Json.Boolean(_))
-
-  private def optBoolFieldDec(jObj: Json.Object, name: String): Either[SchemaError, Option[Boolean]] =
-    getField(jObj, name) match {
-      case None       => Right(None)
-      case Some(json) => JsonDecoder.booleanDecoder.decode(json).map(Some(_))
+  private[openapi] implicit val referenceCodec: JsonCodec[Reference] = new JsonASTCodec[Reference] {
+    override def decodeValue(json: Json): Reference = json match {
+      case jObj: Json.Object =>
+        new Reference(
+          reqField[String](jObj, "$ref"),
+          optFieldDec[Doc](jObj, "summary"),
+          optFieldDec[Doc](jObj, "description")
+        )
+      case _ => error("Expected Json.Object for Reference")
     }
 
-  // ---------------------------------------------------------------------------
-  // ParameterLocation
-  // ---------------------------------------------------------------------------
-
-  implicit val parameterLocationJsonEncoder: JsonEncoder[ParameterLocation] =
-    JsonEncoder.instance[ParameterLocation] {
-      case ParameterLocation.Query  => Json.String("query")
-      case ParameterLocation.Header => Json.String("header")
-      case ParameterLocation.Path   => Json.String("path")
-      case ParameterLocation.Cookie => Json.String("cookie")
-    }
-
-  implicit val parameterLocationJsonDecoder: JsonDecoder[ParameterLocation] =
-    JsonDecoder.instance[ParameterLocation] { json =>
-      json match {
-        case str: Json.String =>
-          str.value match {
-            case "query"  => Right(ParameterLocation.Query)
-            case "header" => Right(ParameterLocation.Header)
-            case "path"   => Right(ParameterLocation.Path)
-            case "cookie" => Right(ParameterLocation.Cookie)
-            case other    => Left(SchemaError(s"Invalid parameter location: $other"))
-          }
-        case _ => Left(SchemaError("Expected String for ParameterLocation"))
-      }
-    }
-
-  // ---------------------------------------------------------------------------
-  // APIKeyLocation
-  // ---------------------------------------------------------------------------
-
-  implicit val apiKeyLocationJsonEncoder: JsonEncoder[APIKeyLocation] =
-    JsonEncoder.instance[APIKeyLocation] {
-      case APIKeyLocation.Query  => Json.String("query")
-      case APIKeyLocation.Header => Json.String("header")
-      case APIKeyLocation.Cookie => Json.String("cookie")
-    }
-
-  implicit val apiKeyLocationJsonDecoder: JsonDecoder[APIKeyLocation] =
-    JsonDecoder.instance[APIKeyLocation] { json =>
-      json match {
-        case str: Json.String =>
-          str.value match {
-            case "query"  => Right(APIKeyLocation.Query)
-            case "header" => Right(APIKeyLocation.Header)
-            case "cookie" => Right(APIKeyLocation.Cookie)
-            case other    => Left(SchemaError(s"Invalid API key location: $other"))
-          }
-        case _ => Left(SchemaError("Expected String for APIKeyLocation"))
-      }
-    }
-
-  // ---------------------------------------------------------------------------
-  // Reference
-  // ---------------------------------------------------------------------------
-
-  implicit val referenceJsonEncoder: JsonEncoder[Reference] = JsonEncoder.instance[Reference] { ref =>
-    obj(
+    override def encodeValue(ref: Reference): Json = obj(
       "$ref"        -> field(ref.`$ref`),
-      "summary"     -> optField(ref.summary)(docJsonEncoder),
-      "description" -> optField(ref.description)(docJsonEncoder)
+      "summary"     -> optField(ref.summary),
+      "description" -> optField(ref.description)
     )
   }
-
-  implicit val referenceJsonDecoder: JsonDecoder[Reference] = JsonDecoder.instance[Reference] { json =>
-    json match {
-      case jObj: Json.Object =>
-        for {
-          ref         <- reqField[String](jObj, "$ref")
-          summary     <- optFieldDec[Doc](jObj, "summary")(docJsonDecoder)
-          description <- optFieldDec[Doc](jObj, "description")(docJsonDecoder)
-        } yield Reference(ref, summary, description)
-      case _ => Left(SchemaError("Expected Object for Reference"))
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // ReferenceOr[A]
-  // ---------------------------------------------------------------------------
-
-  implicit def referenceOrJsonEncoder[A](implicit enc: JsonEncoder[A]): JsonEncoder[ReferenceOr[A]] =
-    JsonEncoder.instance[ReferenceOr[A]] {
-      case ReferenceOr.Ref(reference) => referenceJsonEncoder.encode(reference)
-      case ReferenceOr.Value(value)   => enc.encode(value)
-    }
-
-  implicit def referenceOrJsonDecoder[A](implicit dec: JsonDecoder[A]): JsonDecoder[ReferenceOr[A]] =
-    JsonDecoder.instance[ReferenceOr[A]] { json =>
-      json match {
+  implicit def referenceOrCodec[A](implicit codec: JsonCodec[A]): JsonCodec[ReferenceOr[A]] =
+    new JsonASTCodec[ReferenceOr[A]] {
+      override def decodeValue(json: Json): ReferenceOr[A] = json match {
         case jObj: Json.Object if getField(jObj, "$ref").isDefined =>
-          referenceJsonDecoder.decode(json).map(ReferenceOr.Ref(_))
-        case _ => dec.decode(json).map(ReferenceOr.Value(_))
+          new ReferenceOr.Ref(referenceCodec.decodeValue(json))
+        case _ => new ReferenceOr.Value(codec.decodeValue(json))
+      }
+
+      override def encodeValue(x: ReferenceOr[A]): Json = x match {
+        case r: ReferenceOr.Ref      => referenceCodec.encodeValue(r.reference)
+        case v: ReferenceOr.Value[_] => codec.encodeValue(v.value)
       }
     }
+  private[openapi] implicit val oauthFlowCodec: JsonCodec[OAuthFlow] = new JsonASTCodec[OAuthFlow] {
+    override def decodeValue(json: Json): OAuthFlow = json match {
+      case jObj: Json.Object =>
+        new OAuthFlow(
+          optFieldDec[String](jObj, "authorizationUrl"),
+          optFieldDec[String](jObj, "tokenUrl"),
+          optFieldDec[String](jObj, "refreshUrl"),
+          chunkMapFieldDec[String](jObj, "scopes"),
+          extractExtensions(jObj)
+        )
+      case _ => error("Expected Json.Object for OAuthFlow")
+    }
 
-  // ---------------------------------------------------------------------------
-  // OAuthFlow
-  // ---------------------------------------------------------------------------
-
-  implicit val oauthFlowJsonEncoder: JsonEncoder[OAuthFlow] = JsonEncoder.instance[OAuthFlow] { f =>
-    withExtensions(
+    override def encodeValue(x: OAuthFlow): Json = withExtensions(
       obj(
-        "authorizationUrl" -> optField(f.authorizationUrl),
-        "tokenUrl"         -> optField(f.tokenUrl),
-        "refreshUrl"       -> optField(f.refreshUrl),
-        "scopes"           -> chunkMapField(f.scopes)
+        "authorizationUrl" -> optField(x.authorizationUrl),
+        "tokenUrl"         -> optField(x.tokenUrl),
+        "refreshUrl"       -> optField(x.refreshUrl),
+        "scopes"           -> chunkMapField(x.scopes)
       ),
-      f.extensions
+      x.extensions
     )
   }
-
-  implicit val oauthFlowJsonDecoder: JsonDecoder[OAuthFlow] = JsonDecoder.instance[OAuthFlow] { json =>
-    json match {
+  private[openapi] implicit val oauthFlowsCodec: JsonCodec[OAuthFlows] = new JsonASTCodec[OAuthFlows] {
+    override def decodeValue(json: Json): OAuthFlows = json match {
       case jObj: Json.Object =>
-        for {
-          authorizationUrl <- optFieldDec[String](jObj, "authorizationUrl")
-          tokenUrl         <- optFieldDec[String](jObj, "tokenUrl")
-          refreshUrl       <- optFieldDec[String](jObj, "refreshUrl")
-          scopes           <- chunkMapFieldDec[String](jObj, "scopes")
-        } yield OAuthFlow(authorizationUrl, tokenUrl, refreshUrl, scopes, extractExtensions(jObj))
-      case _ => Left(SchemaError("Expected Object for OAuthFlow"))
+        new OAuthFlows(
+          optFieldDec[OAuthFlow](jObj, "implicit"),
+          optFieldDec[OAuthFlow](jObj, "password"),
+          optFieldDec[OAuthFlow](jObj, "clientCredentials"),
+          optFieldDec[OAuthFlow](jObj, "authorizationCode"),
+          extractExtensions(jObj)
+        )
+      case _ => error("Expected Json.Object for OAuthFlows")
     }
-  }
 
-  // ---------------------------------------------------------------------------
-  // OAuthFlows
-  // ---------------------------------------------------------------------------
-
-  implicit val oauthFlowsJsonEncoder: JsonEncoder[OAuthFlows] = JsonEncoder.instance[OAuthFlows] { fs =>
-    withExtensions(
+    override def encodeValue(x: OAuthFlows): Json = withExtensions(
       obj(
-        "implicit"          -> optField(fs.`implicit`)(oauthFlowJsonEncoder),
-        "password"          -> optField(fs.password)(oauthFlowJsonEncoder),
-        "clientCredentials" -> optField(fs.clientCredentials)(oauthFlowJsonEncoder),
-        "authorizationCode" -> optField(fs.authorizationCode)(oauthFlowJsonEncoder)
+        "implicit"          -> optField(x.`implicit`),
+        "password"          -> optField(x.password),
+        "clientCredentials" -> optField(x.clientCredentials),
+        "authorizationCode" -> optField(x.authorizationCode)
       ),
-      fs.extensions
+      x.extensions
     )
   }
-
-  implicit val oauthFlowsJsonDecoder: JsonDecoder[OAuthFlows] = JsonDecoder.instance[OAuthFlows] { json =>
-    json match {
+  private[openapi] implicit val securitySchemeCodec: JsonCodec[SecurityScheme] = new JsonASTCodec[SecurityScheme] {
+    override def decodeValue(json: Json): SecurityScheme = json match {
       case jObj: Json.Object =>
-        for {
-          impl      <- optFieldDec[OAuthFlow](jObj, "implicit")(oauthFlowJsonDecoder)
-          password  <- optFieldDec[OAuthFlow](jObj, "password")(oauthFlowJsonDecoder)
-          clientCr  <- optFieldDec[OAuthFlow](jObj, "clientCredentials")(oauthFlowJsonDecoder)
-          authzCode <- optFieldDec[OAuthFlow](jObj, "authorizationCode")(oauthFlowJsonDecoder)
-        } yield OAuthFlows(impl, password, clientCr, authzCode, extractExtensions(jObj))
-      case _ => Left(SchemaError("Expected Object for OAuthFlows"))
+        reqField[String](jObj, "type") match {
+          case "apiKey" =>
+            new SecurityScheme.APIKey(
+              reqField[String](jObj, "name"),
+              reqField[APIKeyLocation](jObj, "in"),
+              optFieldDec[Doc](jObj, "description"),
+              extractExtensions(jObj)
+            )
+          case "http" =>
+            new SecurityScheme.HTTP(
+              reqField[String](jObj, "scheme"),
+              optFieldDec[String](jObj, "bearerFormat"),
+              optFieldDec[Doc](jObj, "description"),
+              extractExtensions(jObj)
+            )
+          case "oauth2" =>
+            new SecurityScheme.OAuth2(
+              reqField[OAuthFlows](jObj, "flows"),
+              optFieldDec[Doc](jObj, "description"),
+              extractExtensions(jObj)
+            )
+          case "openIdConnect" =>
+            new SecurityScheme.OpenIdConnect(
+              reqField[String](jObj, "openIdConnectUrl"),
+              optFieldDec[Doc](jObj, "description"),
+              extractExtensions(jObj)
+            )
+          case "mutualTLS" =>
+            new SecurityScheme.MutualTLS(
+              optFieldDec[Doc](jObj, "description"),
+              extractExtensions(jObj)
+            )
+          case other => error(s"Unknown security scheme type: $other")
+        }
+      case _ => error("Expected Json.Object for SecurityScheme")
     }
-  }
 
-  // ---------------------------------------------------------------------------
-  // SecurityScheme
-  // ---------------------------------------------------------------------------
-
-  implicit val securitySchemeJsonEncoder: JsonEncoder[SecurityScheme] =
-    JsonEncoder.instance[SecurityScheme] {
+    override def encodeValue(x: SecurityScheme): Json = x match {
       case s: SecurityScheme.APIKey =>
         withExtensions(
           obj(
             "type"        -> field("apiKey"),
             "name"        -> field(s.name),
-            "in"          -> field(s.in)(apiKeyLocationJsonEncoder),
-            "description" -> optField(s.description)(docJsonEncoder)
+            "in"          -> field(s.in),
+            "description" -> optField(s.description)
           ),
           s.extensions
         )
@@ -658,7 +583,7 @@ object OpenAPICodec {
             "type"         -> field("http"),
             "scheme"       -> field(s.scheme),
             "bearerFormat" -> optField(s.bearerFormat),
-            "description"  -> optField(s.description)(docJsonEncoder)
+            "description"  -> optField(s.description)
           ),
           s.extensions
         )
@@ -666,8 +591,8 @@ object OpenAPICodec {
         withExtensions(
           obj(
             "type"        -> field("oauth2"),
-            "flows"       -> field(s.flows)(oauthFlowsJsonEncoder),
-            "description" -> optField(s.description)(docJsonEncoder)
+            "flows"       -> field(s.flows),
+            "description" -> optField(s.description)
           ),
           s.extensions
         )
@@ -676,7 +601,7 @@ object OpenAPICodec {
           obj(
             "type"             -> field("openIdConnect"),
             "openIdConnectUrl" -> field(s.openIdConnectUrl),
-            "description"      -> optField(s.description)(docJsonEncoder)
+            "description"      -> optField(s.description)
           ),
           s.extensions
         )
@@ -684,808 +609,505 @@ object OpenAPICodec {
         withExtensions(
           obj(
             "type"        -> field("mutualTLS"),
-            "description" -> optField(s.description)(docJsonEncoder)
+            "description" -> optField(s.description)
           ),
           s.extensions
         )
     }
-
-  implicit val securitySchemeJsonDecoder: JsonDecoder[SecurityScheme] =
-    JsonDecoder.instance[SecurityScheme] { json =>
-      json match {
+  }
+  private[openapi] implicit val securityRequirementCodec: JsonCodec[SecurityRequirement] =
+    new JsonASTCodec[SecurityRequirement] {
+      override def decodeValue(json: Json): SecurityRequirement = json match {
         case jObj: Json.Object =>
-          reqField[String](jObj, "type").flatMap {
-            case "apiKey" =>
-              for {
-                name        <- reqField[String](jObj, "name")
-                in          <- reqField[APIKeyLocation](jObj, "in")(apiKeyLocationJsonDecoder)
-                description <- optFieldDec[Doc](jObj, "description")(docJsonDecoder)
-              } yield SecurityScheme.APIKey(name, in, description, extractExtensions(jObj))
-            case "http" =>
-              for {
-                scheme       <- reqField[String](jObj, "scheme")
-                bearerFormat <- optFieldDec[String](jObj, "bearerFormat")
-                description  <- optFieldDec[Doc](jObj, "description")(docJsonDecoder)
-              } yield SecurityScheme.HTTP(scheme, bearerFormat, description, extractExtensions(jObj))
-            case "oauth2" =>
-              for {
-                flows       <- reqField[OAuthFlows](jObj, "flows")(oauthFlowsJsonDecoder)
-                description <- optFieldDec[Doc](jObj, "description")(docJsonDecoder)
-              } yield SecurityScheme.OAuth2(flows, description, extractExtensions(jObj))
-            case "openIdConnect" =>
-              for {
-                url         <- reqField[String](jObj, "openIdConnectUrl")
-                description <- optFieldDec[Doc](jObj, "description")(docJsonDecoder)
-              } yield SecurityScheme.OpenIdConnect(url, description, extractExtensions(jObj))
-            case "mutualTLS" =>
-              for {
-                description <- optFieldDec[Doc](jObj, "description")(docJsonDecoder)
-              } yield SecurityScheme.MutualTLS(description, extractExtensions(jObj))
-            case other => Left(SchemaError(s"Unknown security scheme type: $other"))
-          }
-        case _ => Left(SchemaError("Expected Object for SecurityScheme"))
-      }
-    }
-
-  // ---------------------------------------------------------------------------
-  // SecurityRequirement
-  // ---------------------------------------------------------------------------
-
-  implicit val securityRequirementJsonEncoder: JsonEncoder[SecurityRequirement] =
-    JsonEncoder.instance[SecurityRequirement] { sr =>
-      val builder = ChunkBuilder.make[(String, Json)](sr.requirements.size)
-      sr.requirements.foreach { case (name, scopes) =>
-        val scopeArray = new Json.Array(scopes.map(Json.String(_): Json))
-        builder += (name -> scopeArray)
-      }
-      new Json.Object(builder.result())
-    }
-
-  implicit val securityRequirementJsonDecoder: JsonDecoder[SecurityRequirement] =
-    JsonDecoder.instance[SecurityRequirement] { json =>
-      json match {
-        case jObj: Json.Object =>
-          val builder                             = ChunkMap.newBuilder[String, Chunk[String]]
-          var error: Either[SchemaError, Nothing] = null
+          val builder = ChunkMap.newBuilder[String, Chunk[String]]
           jObj.value.foreach { case (k, v) =>
-            if (error == null) {
-              v match {
-                case arr: Json.Array =>
-                  val scopeBuilder = ChunkBuilder.make[String](arr.value.length)
-                  arr.value.foreach {
-                    case s: Json.String => scopeBuilder += s.value
-                    case other          =>
-                      if (error == null) error = Left(SchemaError(s"Expected String in security scopes, got: $other"))
-                  }
-                  if (error == null) builder += (k -> scopeBuilder.result())
-                case _ =>
-                  error = Left(SchemaError(s"Expected Array for security requirement scopes"))
-              }
+            v match {
+              case arr: Json.Array =>
+                val scopeBuilder = ChunkBuilder.make[String](arr.value.length)
+                arr.value.foreach {
+                  case s: Json.String => scopeBuilder.addOne(s.value)
+                  case other          => error(s"Expected String in security scopes, got: $other")
+                }
+                builder.addOne((k, scopeBuilder.result()))
+              case _ => error(s"Expected Array for security requirement scopes")
             }
           }
-          if (error != null) error.asInstanceOf[Either[SchemaError, SecurityRequirement]]
-          else Right(SecurityRequirement(builder.result()))
-        case _ => Left(SchemaError("Expected Object for SecurityRequirement"))
+          new SecurityRequirement(builder.result())
+        case _ => error("Expected Json.Object for SecurityRequirement")
+      }
+
+      override def encodeValue(x: SecurityRequirement): Json = {
+        val builder = ChunkBuilder.make[(String, Json)](x.requirements.size)
+        x.requirements.foreach { case (name, scopes) =>
+          builder.addOne((name, new Json.Array(scopes.map(Json.String(_): Json))))
+        }
+        new Json.Object(builder.result())
       }
     }
-
-  // ---------------------------------------------------------------------------
-  // SchemaObject
-  // ---------------------------------------------------------------------------
-
-  implicit val schemaObjectJsonEncoder: JsonEncoder[SchemaObject] = JsonEncoder.instance[SchemaObject] { so =>
-    so.toJson
-  }
-
-  implicit val schemaObjectJsonDecoder: JsonDecoder[SchemaObject] = JsonDecoder.instance[SchemaObject] { json =>
-    json match {
+  private[openapi] implicit val schemaObjectCodec: JsonCodec[SchemaObject] = new JsonASTCodec[SchemaObject] {
+    override def decodeValue(json: Json): SchemaObject = json match {
       case jObj: Json.Object =>
-        for {
-          disc <- optFieldDec[Discriminator](jObj, "discriminator")(discriminatorJsonDecoder)
-          x    <- optFieldDec[XML](jObj, "xml")(xmlJsonDecoder)
-          ed   <- optFieldDec[ExternalDocumentation](jObj, "externalDocs")(externalDocumentationJsonDecoder)
-        } yield {
-          val ex           = getField(jObj, "example")
-          val ext          = extractExtensions(jObj)
-          val schemaFields = jObj.value.filter { case (k, _) =>
+        new SchemaObject(
+          new Json.Object(jObj.value.filter { case (k, _) =>
             k != "discriminator" && k != "xml" && k != "externalDocs" && k != "example" && !k.startsWith("x-")
-          }
-          val jsonSchema = new Json.Object(schemaFields)
-          SchemaObject(jsonSchema, disc, x, ed, ex, ext)
-        }
-      case bool: Json.Boolean => Right(SchemaObject(bool))
-      case _                  => Left(SchemaError("Expected Object or Boolean for SchemaObject"))
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Example
-  // ---------------------------------------------------------------------------
-
-  implicit val exampleJsonEncoder: JsonEncoder[Example] = JsonEncoder.instance[Example] { e =>
-    withExtensions(
-      obj(
-        "summary"       -> optField(e.summary)(docJsonEncoder),
-        "description"   -> optField(e.description)(docJsonEncoder),
-        "value"         -> optField(e.value)(JsonEncoder.jsonEncoder),
-        "externalValue" -> optField(e.externalValue)
-      ),
-      e.extensions
-    )
-  }
-
-  implicit val exampleJsonDecoder: JsonDecoder[Example] = JsonDecoder.instance[Example] { json =>
-    json match {
-      case jObj: Json.Object =>
-        for {
-          summary       <- optFieldDec[Doc](jObj, "summary")(docJsonDecoder)
-          description   <- optFieldDec[Doc](jObj, "description")(docJsonDecoder)
-          value         <- optFieldDec[Json](jObj, "value")(JsonDecoder.jsonDecoder)
-          externalValue <- optFieldDec[String](jObj, "externalValue")
-        } yield Example(summary, description, value, externalValue, extractExtensions(jObj))
-      case _ => Left(SchemaError("Expected Object for Example"))
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Link
-  // ---------------------------------------------------------------------------
-
-  implicit lazy val linkJsonEncoder: JsonEncoder[Link] = JsonEncoder.instance[Link] { l =>
-    val operationRefOpt = l.operationRefOrId.flatMap(_.left.toOption)
-    val operationIdOpt  = l.operationRefOrId.flatMap(_.toOption)
-    withExtensions(
-      obj(
-        "operationRef" -> optField(operationRefOpt),
-        "operationId"  -> optField(operationIdOpt),
-        "parameters"   -> chunkMapField(l.parameters)(JsonEncoder.jsonEncoder),
-        "requestBody"  -> optField(l.requestBody)(JsonEncoder.jsonEncoder),
-        "description"  -> optField(l.description)(docJsonEncoder),
-        "server"       -> optField(l.server)(serverJsonEncoder)
-      ),
-      l.extensions
-    )
-  }
-
-  implicit lazy val linkJsonDecoder: JsonDecoder[Link] = JsonDecoder.instance[Link] { json =>
-    json match {
-      case jObj: Json.Object =>
-        for {
-          operationRef <- optFieldDec[String](jObj, "operationRef")
-          operationId  <- optFieldDec[String](jObj, "operationId")
-          parameters   <- chunkMapFieldDec[Json](jObj, "parameters")(JsonDecoder.jsonDecoder)
-          requestBody  <- optFieldDec[Json](jObj, "requestBody")(JsonDecoder.jsonDecoder)
-          description  <- optFieldDec[Doc](jObj, "description")(docJsonDecoder)
-          server       <- optFieldDec[Server](jObj, "server")(serverJsonDecoder)
-        } yield Link(operationRef, operationId, parameters, requestBody, description, server, extractExtensions(jObj))
-      case _ => Left(SchemaError("Expected Object for Link"))
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Encoding (OpenAPI Encoding, not to be confused with charset encoding)
-  // ---------------------------------------------------------------------------
-
-  implicit lazy val encodingJsonEncoder: JsonEncoder[Encoding] = JsonEncoder.instance[Encoding] { e =>
-    withExtensions(
-      obj(
-        "contentType"   -> optField(e.contentType),
-        "headers"       -> chunkMapField(e.headers)(referenceOrJsonEncoder[Header](headerJsonEncoder)),
-        "style"         -> optField(e.style),
-        "explode"       -> optBoolField(e.explode),
-        "allowReserved" -> boolField(e.allowReserved)
-      ),
-      e.extensions
-    )
-  }
-
-  implicit lazy val encodingJsonDecoder: JsonDecoder[Encoding] = JsonDecoder.instance[Encoding] { json =>
-    json match {
-      case jObj: Json.Object =>
-        for {
-          contentType <- optFieldDec[String](jObj, "contentType")
-          headers     <-
-            chunkMapFieldDec[ReferenceOr[Header]](jObj, "headers")(referenceOrJsonDecoder[Header](headerJsonDecoder))
-          style         <- optFieldDec[String](jObj, "style")
-          explode       <- optBoolFieldDec(jObj, "explode")
-          allowReserved <- boolFieldDec(jObj, "allowReserved")
-        } yield Encoding(contentType, headers, style, explode, allowReserved, extractExtensions(jObj))
-      case _ => Left(SchemaError("Expected Object for Encoding"))
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // MediaType
-  // ---------------------------------------------------------------------------
-
-  implicit lazy val mediaTypeJsonEncoder: JsonEncoder[MediaType] = JsonEncoder.instance[MediaType] { mt =>
-    withExtensions(
-      obj(
-        "schema"   -> optField(mt.schema)(referenceOrJsonEncoder[SchemaObject](schemaObjectJsonEncoder)),
-        "example"  -> optField(mt.example)(JsonEncoder.jsonEncoder),
-        "examples" -> chunkMapField(mt.examples)(referenceOrJsonEncoder[Example](exampleJsonEncoder)),
-        "encoding" -> chunkMapField(mt.encoding)(encodingJsonEncoder)
-      ),
-      mt.extensions
-    )
-  }
-
-  implicit lazy val mediaTypeJsonDecoder: JsonDecoder[MediaType] = JsonDecoder.instance[MediaType] { json =>
-    json match {
-      case jObj: Json.Object =>
-        for {
-          schema <- optFieldDec[ReferenceOr[SchemaObject]](jObj, "schema")(
-                      referenceOrJsonDecoder[SchemaObject](schemaObjectJsonDecoder)
-                    )
-          example  <- optFieldDec[Json](jObj, "example")(JsonDecoder.jsonDecoder)
-          examples <-
-            chunkMapFieldDec[ReferenceOr[Example]](jObj, "examples")(
-              referenceOrJsonDecoder[Example](exampleJsonDecoder)
-            )
-          encoding <- chunkMapFieldDec[Encoding](jObj, "encoding")(encodingJsonDecoder)
-        } yield MediaType(schema, example, examples, encoding, extractExtensions(jObj))
-      case _ => Left(SchemaError("Expected Object for MediaType"))
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Header
-  // ---------------------------------------------------------------------------
-
-  implicit lazy val headerJsonEncoder: JsonEncoder[Header] = JsonEncoder.instance[Header] { h =>
-    withExtensions(
-      obj(
-        "description"     -> optField(h.description)(docJsonEncoder),
-        "required"        -> boolField(h.required),
-        "deprecated"      -> boolField(h.deprecated),
-        "allowEmptyValue" -> boolField(h.allowEmptyValue),
-        "style"           -> optField(h.style),
-        "explode"         -> optBoolField(h.explode),
-        "allowReserved"   -> optBoolField(h.allowReserved),
-        "schema"          -> optField(h.schema)(referenceOrJsonEncoder[SchemaObject](schemaObjectJsonEncoder)),
-        "example"         -> optField(h.example)(JsonEncoder.jsonEncoder),
-        "examples"        -> chunkMapField(h.examples)(referenceOrJsonEncoder[Example](exampleJsonEncoder)),
-        "content"         -> chunkMapField(h.content)(mediaTypeJsonEncoder)
-      ),
-      h.extensions
-    )
-  }
-
-  implicit lazy val headerJsonDecoder: JsonDecoder[Header] = JsonDecoder.instance[Header] { json =>
-    json match {
-      case jObj: Json.Object =>
-        for {
-          description     <- optFieldDec[Doc](jObj, "description")(docJsonDecoder)
-          required        <- boolFieldDec(jObj, "required")
-          deprecated      <- boolFieldDec(jObj, "deprecated")
-          allowEmptyValue <- boolFieldDec(jObj, "allowEmptyValue")
-          style           <- optFieldDec[String](jObj, "style")
-          explode         <- optBoolFieldDec(jObj, "explode")
-          allowReserved   <- optBoolFieldDec(jObj, "allowReserved")
-          schema          <- optFieldDec[ReferenceOr[SchemaObject]](jObj, "schema")(
-                      referenceOrJsonDecoder[SchemaObject](schemaObjectJsonDecoder)
-                    )
-          example  <- optFieldDec[Json](jObj, "example")(JsonDecoder.jsonDecoder)
-          examples <-
-            chunkMapFieldDec[ReferenceOr[Example]](jObj, "examples")(
-              referenceOrJsonDecoder[Example](exampleJsonDecoder)
-            )
-          content <- chunkMapFieldDec[MediaType](jObj, "content")(mediaTypeJsonDecoder)
-        } yield Header(
-          description,
-          required,
-          deprecated,
-          allowEmptyValue,
-          style,
-          explode,
-          allowReserved,
-          schema,
-          example,
-          examples,
-          content,
+          }),
+          optFieldDec[Discriminator](jObj, "discriminator"),
+          optFieldDec[XML](jObj, "xml"),
+          optFieldDec[ExternalDocumentation](jObj, "externalDocs"),
+          getField(jObj, "example"),
           extractExtensions(jObj)
         )
-      case _ => Left(SchemaError("Expected Object for Header"))
+      case bool: Json.Boolean => new SchemaObject(bool)
+      case _                  => error("Expected Json.Object or Json.Boolean for SchemaObject")
     }
+
+    override def encodeValue(x: SchemaObject): Json = x.toJson
   }
+  private[openapi] implicit val exampleCodec: JsonCodec[Example] = new JsonASTCodec[Example] {
+    override def decodeValue(json: Json): Example = json match {
+      case jObj: Json.Object =>
+        new Example(
+          optFieldDec[Doc](jObj, "summary"),
+          optFieldDec[Doc](jObj, "description"),
+          optFieldDec[Json](jObj, "value"),
+          optFieldDec[String](jObj, "externalValue"),
+          extractExtensions(jObj)
+        )
+      case _ => error("Expected Json.Object for Example")
+    }
 
-  // ---------------------------------------------------------------------------
-  // Parameter
-  // ---------------------------------------------------------------------------
+    override def encodeValue(x: Example): Json = withExtensions(
+      obj(
+        "summary"       -> optField(x.summary),
+        "description"   -> optField(x.description),
+        "value"         -> optField(x.value),
+        "externalValue" -> optField(x.externalValue)
+      ),
+      x.extensions
+    )
+  }
+  private[openapi] implicit lazy val linkCodec: JsonCodec[Link] = new JsonASTCodec[Link] {
+    override def decodeValue(json: Json): Link = json match {
+      case jObj: Json.Object =>
+        new Link(
+          optFieldDec[String](jObj, "operationRef"),
+          optFieldDec[String](jObj, "operationId"),
+          chunkMapFieldDec[Json](jObj, "parameters"),
+          optFieldDec[Json](jObj, "requestBody"),
+          optFieldDec[Doc](jObj, "description"),
+          optFieldDec[Server](jObj, "server"),
+          extractExtensions(jObj)
+        )
+      case _ => error("Expected Json.Object for Link")
+    }
 
-  implicit lazy val parameterJsonEncoder: JsonEncoder[Parameter] = JsonEncoder.instance[Parameter] { p =>
-    withExtensions(
+    override def encodeValue(x: Link): Json = withExtensions(
+      obj(
+        "operationRef" -> optField(x.operationRef),
+        "operationId"  -> optField(x.operationId),
+        "parameters"   -> chunkMapField(x.parameters),
+        "requestBody"  -> optField(x.requestBody),
+        "description"  -> optField(x.description),
+        "server"       -> optField(x.server)
+      ),
+      x.extensions
+    )
+  }
+  private[openapi] implicit lazy val encodingCodec: JsonCodec[Encoding] = new JsonASTCodec[Encoding] {
+    override def decodeValue(json: Json): Encoding = json match {
+      case jObj: Json.Object =>
+        new Encoding(
+          optFieldDec[String](jObj, "contentType"),
+          chunkMapFieldDec[ReferenceOr[Header]](jObj, "headers"),
+          optFieldDec[String](jObj, "style"),
+          optBoolFieldDec(jObj, "explode"),
+          boolFieldDec(jObj, "allowReserved"),
+          extractExtensions(jObj)
+        )
+      case _ => error("Expected Json.Object for Encoding")
+    }
+
+    override def encodeValue(x: Encoding): Json = withExtensions(
+      obj(
+        "contentType"   -> optField(x.contentType),
+        "headers"       -> chunkMapField(x.headers),
+        "style"         -> optField(x.style),
+        "explode"       -> optBoolField(x.explode),
+        "allowReserved" -> boolField(x.allowReserved)
+      ),
+      x.extensions
+    )
+  }
+  private[openapi] implicit lazy val mediaTypeCodec: JsonCodec[MediaType] = new JsonASTCodec[MediaType] {
+    override def decodeValue(json: Json): MediaType = json match {
+      case jObj: Json.Object =>
+        new MediaType(
+          optFieldDec[ReferenceOr[SchemaObject]](jObj, "schema"),
+          optFieldDec[Json](jObj, "example"),
+          chunkMapFieldDec[ReferenceOr[Example]](jObj, "examples"),
+          chunkMapFieldDec[Encoding](jObj, "encoding"),
+          extractExtensions(jObj)
+        )
+      case _ => error("Expected Json.Object for MediaType")
+    }
+
+    override def encodeValue(x: MediaType): Json = withExtensions(
+      obj(
+        "schema"   -> optField(x.schema),
+        "example"  -> optField(x.example),
+        "examples" -> chunkMapField(x.examples),
+        "encoding" -> chunkMapField(x.encoding)
+      ),
+      x.extensions
+    )
+  }
+  private[openapi] implicit lazy val headerCodec: JsonCodec[Header] = new JsonASTCodec[Header] {
+    override def decodeValue(json: Json): Header = json match {
+      case jObj: Json.Object =>
+        new Header(
+          optFieldDec[Doc](jObj, "description"),
+          boolFieldDec(jObj, "required"),
+          boolFieldDec(jObj, "deprecated"),
+          boolFieldDec(jObj, "allowEmptyValue"),
+          optFieldDec[String](jObj, "style"),
+          optBoolFieldDec(jObj, "explode"),
+          optBoolFieldDec(jObj, "allowReserved"),
+          optFieldDec[ReferenceOr[SchemaObject]](jObj, "schema"),
+          optFieldDec[Json](jObj, "example"),
+          chunkMapFieldDec[ReferenceOr[Example]](jObj, "examples"),
+          chunkMapFieldDec[MediaType](jObj, "content"),
+          extractExtensions(jObj)
+        )
+      case _ => error("Expected Json.Object for Header")
+    }
+
+    override def encodeValue(x: Header): Json = withExtensions(
+      obj(
+        "description"     -> optField(x.description),
+        "required"        -> boolField(x.required),
+        "deprecated"      -> boolField(x.deprecated),
+        "allowEmptyValue" -> boolField(x.allowEmptyValue),
+        "style"           -> optField(x.style),
+        "explode"         -> optBoolField(x.explode),
+        "allowReserved"   -> optBoolField(x.allowReserved),
+        "schema"          -> optField(x.schema),
+        "example"         -> optField(x.example),
+        "examples"        -> chunkMapField(x.examples),
+        "content"         -> chunkMapField(x.content)
+      ),
+      x.extensions
+    )
+  }
+  private[openapi] implicit lazy val parameterCodec: JsonCodec[Parameter] = new JsonASTCodec[Parameter] {
+    override def decodeValue(json: Json): Parameter = json match {
+      case jObj: Json.Object =>
+        new Parameter(
+          reqField[String](jObj, "name"),
+          reqField[ParameterLocation](jObj, "in"),
+          optFieldDec[Doc](jObj, "description"),
+          boolFieldDec(jObj, "required"),
+          boolFieldDec(jObj, "deprecated"),
+          boolFieldDec(jObj, "allowEmptyValue"),
+          optFieldDec[String](jObj, "style"),
+          optBoolFieldDec(jObj, "explode"),
+          optBoolFieldDec(jObj, "allowReserved"),
+          optFieldDec[ReferenceOr[SchemaObject]](jObj, "schema"),
+          optFieldDec[Json](jObj, "example"),
+          chunkMapFieldDec[ReferenceOr[Example]](jObj, "examples"),
+          chunkMapFieldDec[MediaType](jObj, "content"),
+          extractExtensions(jObj)
+        )
+      case _ => error("Expected Json.Object for Parameter")
+    }
+
+    override def encodeValue(p: Parameter): Json = withExtensions(
       obj(
         "name"            -> field(p.name),
-        "in"              -> field(p.in)(parameterLocationJsonEncoder),
-        "description"     -> optField(p.description)(docJsonEncoder),
+        "in"              -> field(p.in),
+        "description"     -> optField(p.description),
         "required"        -> boolField(p.required),
         "deprecated"      -> boolField(p.deprecated),
         "allowEmptyValue" -> boolField(p.allowEmptyValue),
         "style"           -> optField(p.style),
         "explode"         -> optBoolField(p.explode),
         "allowReserved"   -> optBoolField(p.allowReserved),
-        "schema"          -> optField(p.schema)(referenceOrJsonEncoder[SchemaObject](schemaObjectJsonEncoder)),
-        "example"         -> optField(p.example)(JsonEncoder.jsonEncoder),
-        "examples"        -> chunkMapField(p.examples)(referenceOrJsonEncoder[Example](exampleJsonEncoder)),
-        "content"         -> chunkMapField(p.content)(mediaTypeJsonEncoder)
+        "schema"          -> optField(p.schema),
+        "example"         -> optField(p.example),
+        "examples"        -> chunkMapField(p.examples),
+        "content"         -> chunkMapField(p.content)
       ),
       p.extensions
     )
   }
-
-  implicit lazy val parameterJsonDecoder: JsonDecoder[Parameter] = JsonDecoder.instance[Parameter] { json =>
-    json match {
+  private[openapi] implicit lazy val requestBodyCodec: JsonCodec[RequestBody] = new JsonASTCodec[RequestBody] {
+    override def decodeValue(json: Json): RequestBody = json match {
       case jObj: Json.Object =>
-        for {
-          name            <- reqField[String](jObj, "name")
-          in              <- reqField[ParameterLocation](jObj, "in")(parameterLocationJsonDecoder)
-          description     <- optFieldDec[Doc](jObj, "description")(docJsonDecoder)
-          required        <- boolFieldDec(jObj, "required")
-          deprecated      <- boolFieldDec(jObj, "deprecated")
-          allowEmptyValue <- boolFieldDec(jObj, "allowEmptyValue")
-          style           <- optFieldDec[String](jObj, "style")
-          explode         <- optBoolFieldDec(jObj, "explode")
-          allowReserved   <- optBoolFieldDec(jObj, "allowReserved")
-          schema          <- optFieldDec[ReferenceOr[SchemaObject]](jObj, "schema")(
-                      referenceOrJsonDecoder[SchemaObject](schemaObjectJsonDecoder)
-                    )
-          example  <- optFieldDec[Json](jObj, "example")(JsonDecoder.jsonDecoder)
-          examples <-
-            chunkMapFieldDec[ReferenceOr[Example]](jObj, "examples")(
-              referenceOrJsonDecoder[Example](exampleJsonDecoder)
-            )
-          content <- chunkMapFieldDec[MediaType](jObj, "content")(mediaTypeJsonDecoder)
-        } yield Parameter(
-          name,
-          in,
-          description,
-          required,
-          deprecated,
-          allowEmptyValue,
-          style,
-          explode,
-          allowReserved,
-          schema,
-          example,
-          examples,
-          content,
+        new RequestBody(
+          chunkMapFieldDec[MediaType](jObj, "content"),
+          optFieldDec[Doc](jObj, "description"),
+          boolFieldDec(jObj, "required"),
           extractExtensions(jObj)
         )
-      case _ => Left(SchemaError("Expected Object for Parameter"))
+      case _ => error("Expected Json.Object for RequestBody")
     }
-  }
 
-  // ---------------------------------------------------------------------------
-  // RequestBody
-  // ---------------------------------------------------------------------------
-
-  implicit lazy val requestBodyJsonEncoder: JsonEncoder[RequestBody] = JsonEncoder.instance[RequestBody] { rb =>
-    withExtensions(
+    override def encodeValue(rb: RequestBody): Json = withExtensions(
       obj(
-        "content"     -> chunkMapField(rb.content)(mediaTypeJsonEncoder),
-        "description" -> optField(rb.description)(docJsonEncoder),
+        "content"     -> chunkMapField(rb.content),
+        "description" -> optField(rb.description),
         "required"    -> boolField(rb.required)
       ),
       rb.extensions
     )
   }
-
-  implicit lazy val requestBodyJsonDecoder: JsonDecoder[RequestBody] = JsonDecoder.instance[RequestBody] { json =>
-    json match {
+  private[openapi] implicit lazy val responseCodec: JsonCodec[Response] = new JsonASTCodec[Response] {
+    override def decodeValue(json: Json): Response = json match {
       case jObj: Json.Object =>
-        for {
-          content     <- chunkMapFieldDec[MediaType](jObj, "content")(mediaTypeJsonDecoder)
-          description <- optFieldDec[Doc](jObj, "description")(docJsonDecoder)
-          required    <- boolFieldDec(jObj, "required")
-        } yield RequestBody(content, description, required, extractExtensions(jObj))
-      case _ => Left(SchemaError("Expected Object for RequestBody"))
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Response
-  // ---------------------------------------------------------------------------
-
-  implicit lazy val responseJsonEncoder: JsonEncoder[Response] = JsonEncoder.instance[Response] { r =>
-    withExtensions(
-      obj(
-        "description" -> field(r.description)(docJsonEncoder),
-        "headers"     -> chunkMapField(r.headers)(referenceOrJsonEncoder[Header](headerJsonEncoder)),
-        "content"     -> chunkMapField(r.content)(mediaTypeJsonEncoder),
-        "links"       -> chunkMapField(r.links)(referenceOrJsonEncoder[Link](linkJsonEncoder))
-      ),
-      r.extensions
-    )
-  }
-
-  implicit lazy val responseJsonDecoder: JsonDecoder[Response] = JsonDecoder.instance[Response] { json =>
-    json match {
-      case jObj: Json.Object =>
-        for {
-          description <- reqField[Doc](jObj, "description")(docJsonDecoder)
-          headers     <-
-            chunkMapFieldDec[ReferenceOr[Header]](jObj, "headers")(referenceOrJsonDecoder[Header](headerJsonDecoder))
-          content <- chunkMapFieldDec[MediaType](jObj, "content")(mediaTypeJsonDecoder)
-          links   <- chunkMapFieldDec[ReferenceOr[Link]](jObj, "links")(referenceOrJsonDecoder[Link](linkJsonDecoder))
-        } yield Response(description, headers, content, links, extractExtensions(jObj))
-      case _ => Left(SchemaError("Expected Object for Response"))
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Responses
-  // ---------------------------------------------------------------------------
-
-  implicit lazy val responsesJsonEncoder: JsonEncoder[Responses] = JsonEncoder.instance[Responses] { r =>
-    val refOrRespEnc = referenceOrJsonEncoder[Response](responseJsonEncoder)
-    val builder      = ChunkBuilder.make[(String, Json)](r.responses.size + 2)
-    r.responses.foreach { case (code, resp) =>
-      builder += (code -> refOrRespEnc.encode(resp))
-    }
-    r.default.foreach { d =>
-      builder += ("default" -> refOrRespEnc.encode(d))
-    }
-    r.extensions.foreach { case (k, v) => builder += (k -> v) }
-    new Json.Object(builder.result())
-  }
-
-  implicit lazy val responsesJsonDecoder: JsonDecoder[Responses] = JsonDecoder.instance[Responses] { json =>
-    json match {
-      case jObj: Json.Object =>
-        val refOrRespDec   = referenceOrJsonDecoder[Response](responseJsonDecoder)
-        val ext            = extractExtensions(jObj)
-        val defaultOpt     = getField(jObj, "default")
-        val responseFields = jObj.value.filter { case (k, _) =>
-          k != "default" && !k.startsWith("x-")
-        }
-        for {
-          default <- defaultOpt match {
-                       case None       => Right(None)
-                       case Some(json) => refOrRespDec.decode(json).map(Some(_))
-                     }
-          responses <- {
-            val builder                             = ChunkMap.newBuilder[String, ReferenceOr[Response]]
-            var error: Either[SchemaError, Nothing] = null
-            responseFields.foreach { case (k, v) =>
-              if (error == null) {
-                refOrRespDec.decode(v) match {
-                  case Right(r) => builder += (k -> r)
-                  case Left(e)  => error = Left(e)
-                }
-              }
-            }
-            if (error != null) error.asInstanceOf[Either[SchemaError, ChunkMap[String, ReferenceOr[Response]]]]
-            else Right(builder.result())
-          }
-        } yield Responses(responses, default, ext)
-      case _ => Left(SchemaError("Expected Object for Responses"))
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Callback (circular: references PathItem)
-  // ---------------------------------------------------------------------------
-
-  implicit lazy val callbackJsonEncoder: JsonEncoder[Callback] = JsonEncoder.instance[Callback] { cb =>
-    val pathFields = cb.callbacks.map { case (k, v) =>
-      (k, referenceOrJsonEncoder[PathItem](pathItemJsonEncoder).encode(v))
-    }
-    new Json.Object(Chunk.from(pathFields) ++ Chunk.from(cb.extensions))
-  }
-
-  implicit lazy val callbackJsonDecoder: JsonDecoder[Callback] = JsonDecoder.instance[Callback] { json =>
-    json match {
-      case jObj: Json.Object =>
-        val refOrPathDec                        = referenceOrJsonDecoder[PathItem](pathItemJsonDecoder)
-        val ext                                 = extractExtensions(jObj)
-        val callbackFields                      = jObj.value.filter { case (k, _) => !k.startsWith("x-") }
-        val builder                             = ChunkMap.newBuilder[String, ReferenceOr[PathItem]]
-        var error: Either[SchemaError, Nothing] = null
-        callbackFields.foreach { case (k, v) =>
-          if (error == null) {
-            refOrPathDec.decode(v) match {
-              case Right(r) => builder += (k -> r)
-              case Left(e)  => error = Left(e)
-            }
-          }
-        }
-        if (error != null) error.asInstanceOf[Either[SchemaError, Callback]]
-        else Right(Callback(builder.result(), ext))
-      case _ => Left(SchemaError("Expected Object for Callback"))
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Operation (circular: references Callback)
-  // ---------------------------------------------------------------------------
-
-  implicit lazy val operationJsonEncoder: JsonEncoder[Operation] = JsonEncoder.instance[Operation] { op =>
-    withExtensions(
-      obj(
-        "responses"    -> field(op.responses)(responsesJsonEncoder),
-        "tags"         -> chunkField(op.tags),
-        "summary"      -> optField(op.summary)(docJsonEncoder),
-        "description"  -> optField(op.description)(docJsonEncoder),
-        "externalDocs" -> optField(op.externalDocs)(externalDocumentationJsonEncoder),
-        "operationId"  -> optField(op.operationId),
-        "parameters"   -> chunkField(op.parameters)(referenceOrJsonEncoder[Parameter](parameterJsonEncoder)),
-        "requestBody"  -> optField(op.requestBody)(referenceOrJsonEncoder[RequestBody](requestBodyJsonEncoder)),
-        "callbacks"    -> chunkMapField(op.callbacks)(referenceOrJsonEncoder[Callback](callbackJsonEncoder)),
-        "deprecated"   -> boolField(op.deprecated),
-        "security"     -> chunkField(op.security)(securityRequirementJsonEncoder),
-        "servers"      -> chunkField(op.servers)(serverJsonEncoder)
-      ),
-      op.extensions
-    )
-  }
-
-  implicit lazy val operationJsonDecoder: JsonDecoder[Operation] = JsonDecoder.instance[Operation] { json =>
-    json match {
-      case jObj: Json.Object =>
-        for {
-          responses <- {
-            getField(jObj, "responses") match {
-              case None        => Right(Responses())
-              case Some(rJson) => responsesJsonDecoder.decode(rJson)
-            }
-          }
-          tags        <- chunkFieldDec[String](jObj, "tags")
-          summary     <- optFieldDec[Doc](jObj, "summary")(docJsonDecoder)
-          description <- optFieldDec[Doc](jObj, "description")(docJsonDecoder)
-          extDocs     <- optFieldDec[ExternalDocumentation](jObj, "externalDocs")(externalDocumentationJsonDecoder)
-          operationId <- optFieldDec[String](jObj, "operationId")
-          parameters  <- chunkFieldDec[ReferenceOr[Parameter]](jObj, "parameters")(
-                          referenceOrJsonDecoder[Parameter](parameterJsonDecoder)
-                        )
-          requestBody <- optFieldDec[ReferenceOr[RequestBody]](jObj, "requestBody")(
-                           referenceOrJsonDecoder[RequestBody](requestBodyJsonDecoder)
-                         )
-          callbacks <-
-            chunkMapFieldDec[ReferenceOr[Callback]](jObj, "callbacks")(
-              referenceOrJsonDecoder[Callback](callbackJsonDecoder)
-            )
-          deprecated <- boolFieldDec(jObj, "deprecated")
-          security   <- chunkFieldDec[SecurityRequirement](jObj, "security")(securityRequirementJsonDecoder)
-          servers    <- chunkFieldDec[Server](jObj, "servers")(serverJsonDecoder)
-        } yield Operation(
-          responses,
-          tags,
-          summary,
-          description,
-          extDocs,
-          operationId,
-          parameters,
-          requestBody,
-          callbacks,
-          deprecated,
-          security,
-          servers,
+        new Response(
+          reqField[Doc](jObj, "description"),
+          chunkMapFieldDec[ReferenceOr[Header]](jObj, "headers"),
+          chunkMapFieldDec[MediaType](jObj, "content"),
+          chunkMapFieldDec[ReferenceOr[Link]](jObj, "links"),
           extractExtensions(jObj)
         )
-      case _ => Left(SchemaError("Expected Object for Operation"))
+      case _ => error("Expected Json.Object for Response")
     }
-  }
 
-  // ---------------------------------------------------------------------------
-  // PathItem (circular: references Operation)
-  // ---------------------------------------------------------------------------
-
-  implicit lazy val pathItemJsonEncoder: JsonEncoder[PathItem] = JsonEncoder.instance[PathItem] { pi =>
-    withExtensions(
+    override def encodeValue(x: Response): Json = withExtensions(
       obj(
-        "summary"     -> optField(pi.summary)(docJsonEncoder),
-        "description" -> optField(pi.description)(docJsonEncoder),
-        "get"         -> optField(pi.get)(operationJsonEncoder),
-        "put"         -> optField(pi.put)(operationJsonEncoder),
-        "post"        -> optField(pi.post)(operationJsonEncoder),
-        "delete"      -> optField(pi.delete)(operationJsonEncoder),
-        "options"     -> optField(pi.options)(operationJsonEncoder),
-        "head"        -> optField(pi.head)(operationJsonEncoder),
-        "patch"       -> optField(pi.patch)(operationJsonEncoder),
-        "trace"       -> optField(pi.trace)(operationJsonEncoder),
-        "servers"     -> chunkField(pi.servers)(serverJsonEncoder),
-        "parameters"  -> chunkField(pi.parameters)(referenceOrJsonEncoder[Parameter](parameterJsonEncoder))
+        "description" -> field(x.description),
+        "headers"     -> chunkMapField(x.headers),
+        "content"     -> chunkMapField(x.content),
+        "links"       -> chunkMapField(x.links)
       ),
-      pi.extensions
+      x.extensions
     )
   }
+  private[openapi] implicit lazy val responsesCodec: JsonCodec[Responses] = new JsonASTCodec[Responses] {
+    private[this] val refOrRespCodec = referenceOrCodec[Response](responseCodec)
 
-  implicit lazy val pathItemJsonDecoder: JsonDecoder[PathItem] = JsonDecoder.instance[PathItem] { json =>
-    json match {
+    override def decodeValue(json: Json): Responses = json match {
       case jObj: Json.Object =>
-        for {
-          summary     <- optFieldDec[Doc](jObj, "summary")(docJsonDecoder)
-          description <- optFieldDec[Doc](jObj, "description")(docJsonDecoder)
-          get         <- optFieldDec[Operation](jObj, "get")(operationJsonDecoder)
-          put         <- optFieldDec[Operation](jObj, "put")(operationJsonDecoder)
-          post        <- optFieldDec[Operation](jObj, "post")(operationJsonDecoder)
-          delete      <- optFieldDec[Operation](jObj, "delete")(operationJsonDecoder)
-          options     <- optFieldDec[Operation](jObj, "options")(operationJsonDecoder)
-          head        <- optFieldDec[Operation](jObj, "head")(operationJsonDecoder)
-          patch       <- optFieldDec[Operation](jObj, "patch")(operationJsonDecoder)
-          trace       <- optFieldDec[Operation](jObj, "trace")(operationJsonDecoder)
-          servers     <- chunkFieldDec[Server](jObj, "servers")(serverJsonDecoder)
-          parameters  <- chunkFieldDec[ReferenceOr[Parameter]](jObj, "parameters")(
-                          referenceOrJsonDecoder[Parameter](parameterJsonDecoder)
-                        )
-        } yield PathItem(
-          summary,
-          description,
-          get,
-          put,
-          post,
-          delete,
-          options,
-          head,
-          patch,
-          trace,
-          servers,
-          parameters,
-          extractExtensions(jObj)
-        )
-      case _ => Left(SchemaError("Expected Object for PathItem"))
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Paths
-  // ---------------------------------------------------------------------------
-
-  implicit lazy val pathsJsonEncoder: JsonEncoder[Paths] = JsonEncoder.instance[Paths] { paths =>
-    val pathFields = paths.paths.map { case (k, v) => (k, pathItemJsonEncoder.encode(v)) }
-    new Json.Object(Chunk.from(pathFields) ++ Chunk.from(paths.extensions))
-  }
-
-  implicit lazy val pathsJsonDecoder: JsonDecoder[Paths] = JsonDecoder.instance[Paths] { json =>
-    json match {
-      case jObj: Json.Object =>
-        val ext                                 = extractExtensions(jObj)
-        val pathFields                          = jObj.value.filter { case (k, _) => !k.startsWith("x-") }
-        val builder                             = ChunkMap.newBuilder[String, PathItem]
-        var error: Either[SchemaError, Nothing] = null
-        pathFields.foreach { case (k, v) =>
-          if (error == null) {
-            pathItemJsonDecoder.decode(v) match {
-              case Right(r) => builder += (k -> r)
-              case Left(e)  => error = Left(e)
+        new Responses(
+          jObj.value
+            .foldLeft(new ChunkMap.ChunkMapBuilder[String, ReferenceOr[Response]]) { case (acc, (k, v)) =>
+              if (k != "default" && !k.startsWith("x-")) acc.add(k, refOrRespCodec.decodeValue(v))
+              acc
             }
+            .result(),
+          getField(jObj, "default") match {
+            case Some(json) => new Some(refOrRespCodec.decodeValue(json))
+            case _          => None
+          },
+          extractExtensions(jObj)
+        )
+      case _ => error("Expected Json.Object for Responses")
+    }
+
+    override def encodeValue(x: Responses): Json = {
+      val builder = ChunkBuilder.make[(String, Json)](x.responses.size + x.extensions.size + 2)
+      x.responses.foreach { case (code, resp) => builder.addOne((code, refOrRespCodec.encodeValue(resp))) }
+      x.default.foreach(d => builder.addOne(("default", refOrRespCodec.encodeValue(d))))
+      x.extensions.foreach(kv => builder.addOne(kv))
+      new Json.Object(builder.result())
+    }
+  }
+  private[openapi] implicit lazy val callbackCodec: JsonCodec[Callback] = new JsonASTCodec[Callback] {
+    private[this] val refOrPathCodec = referenceOrCodec[PathItem](pathItemCodec)
+
+    override def decodeValue(json: Json): Callback = json match {
+      case jObj: Json.Object =>
+        new Callback(
+          jObj.value
+            .foldLeft(new ChunkMap.ChunkMapBuilder[String, ReferenceOr[PathItem]]) { case (acc, (k, v)) =>
+              if (!k.startsWith("x-")) acc.add(k, refOrPathCodec.decodeValue(v))
+              acc
+            }
+            .result(),
+          extractExtensions(jObj)
+        )
+      case _ => error("Expected Json.Object for Callback")
+    }
+
+    override def encodeValue(x: Callback): Json =
+      new Json.Object(
+        x.callbacks
+          .foldLeft(ChunkBuilder.make[(String, Json)](x.callbacks.size + x.extensions.size)) { case (acc, (k, v)) =>
+            acc.addOne((k, refOrPathCodec.encodeValue(v)))
           }
-        }
-        if (error != null) error.asInstanceOf[Either[SchemaError, Paths]]
-        else Right(Paths(builder.result(), ext))
-      case _ => Left(SchemaError("Expected Object for Paths"))
-    }
+          .addAll(x.extensions)
+          .result()
+      )
   }
-
-  // ---------------------------------------------------------------------------
-  // Components
-  // ---------------------------------------------------------------------------
-
-  implicit lazy val componentsJsonEncoder: JsonEncoder[Components] = JsonEncoder.instance[Components] { c =>
-    withExtensions(
-      obj(
-        "schemas"         -> chunkMapField(c.schemas)(referenceOrJsonEncoder[SchemaObject](schemaObjectJsonEncoder)),
-        "responses"       -> chunkMapField(c.responses)(referenceOrJsonEncoder[Response](responseJsonEncoder)),
-        "parameters"      -> chunkMapField(c.parameters)(referenceOrJsonEncoder[Parameter](parameterJsonEncoder)),
-        "examples"        -> chunkMapField(c.examples)(referenceOrJsonEncoder[Example](exampleJsonEncoder)),
-        "requestBodies"   -> chunkMapField(c.requestBodies)(referenceOrJsonEncoder[RequestBody](requestBodyJsonEncoder)),
-        "headers"         -> chunkMapField(c.headers)(referenceOrJsonEncoder[Header](headerJsonEncoder)),
-        "securitySchemes" -> chunkMapField(c.securitySchemes)(
-          referenceOrJsonEncoder[SecurityScheme](securitySchemeJsonEncoder)
-        ),
-        "links"     -> chunkMapField(c.links)(referenceOrJsonEncoder[Link](linkJsonEncoder)),
-        "callbacks" -> chunkMapField(c.callbacks)(referenceOrJsonEncoder[Callback](callbackJsonEncoder)),
-        "pathItems" -> chunkMapField(c.pathItems)(referenceOrJsonEncoder[PathItem](pathItemJsonEncoder))
-      ),
-      c.extensions
-    )
-  }
-
-  implicit lazy val componentsJsonDecoder: JsonDecoder[Components] = JsonDecoder.instance[Components] { json =>
-    json match {
+  private[openapi] implicit lazy val operationCodec: JsonCodec[Operation] = new JsonASTCodec[Operation] {
+    override def decodeValue(json: Json): Operation = json match {
       case jObj: Json.Object =>
-        for {
-          schemas <- chunkMapFieldDec[ReferenceOr[SchemaObject]](jObj, "schemas")(
-                       referenceOrJsonDecoder[SchemaObject](schemaObjectJsonDecoder)
-                     )
-          responses <-
-            chunkMapFieldDec[ReferenceOr[Response]](jObj, "responses")(
-              referenceOrJsonDecoder[Response](responseJsonDecoder)
-            )
-          parameters <- chunkMapFieldDec[ReferenceOr[Parameter]](jObj, "parameters")(
-                          referenceOrJsonDecoder[Parameter](parameterJsonDecoder)
-                        )
-          examples <-
-            chunkMapFieldDec[ReferenceOr[Example]](jObj, "examples")(
-              referenceOrJsonDecoder[Example](exampleJsonDecoder)
-            )
-          requestBodies <- chunkMapFieldDec[ReferenceOr[RequestBody]](jObj, "requestBodies")(
-                             referenceOrJsonDecoder[RequestBody](requestBodyJsonDecoder)
-                           )
-          headers <-
-            chunkMapFieldDec[ReferenceOr[Header]](jObj, "headers")(referenceOrJsonDecoder[Header](headerJsonDecoder))
-          securitySchemes <- chunkMapFieldDec[ReferenceOr[SecurityScheme]](jObj, "securitySchemes")(
-                               referenceOrJsonDecoder[SecurityScheme](securitySchemeJsonDecoder)
-                             )
-          links     <- chunkMapFieldDec[ReferenceOr[Link]](jObj, "links")(referenceOrJsonDecoder[Link](linkJsonDecoder))
-          callbacks <-
-            chunkMapFieldDec[ReferenceOr[Callback]](jObj, "callbacks")(
-              referenceOrJsonDecoder[Callback](callbackJsonDecoder)
-            )
-          pathItems <-
-            chunkMapFieldDec[ReferenceOr[PathItem]](jObj, "pathItems")(
-              referenceOrJsonDecoder[PathItem](pathItemJsonDecoder)
-            )
-        } yield Components(
-          schemas,
-          responses,
-          parameters,
-          examples,
-          requestBodies,
-          headers,
-          securitySchemes,
-          links,
-          callbacks,
-          pathItems,
+        new Operation(
+          getField(jObj, "responses") match {
+            case Some(rJson) => responsesCodec.decodeValue(rJson)
+            case _           => Responses()
+          },
+          chunkFieldDec[String](jObj, "tags"),
+          optFieldDec[Doc](jObj, "summary"),
+          optFieldDec[Doc](jObj, "description"),
+          optFieldDec[ExternalDocumentation](jObj, "externalDocs"),
+          optFieldDec[String](jObj, "operationId"),
+          chunkFieldDec[ReferenceOr[Parameter]](jObj, "parameters"),
+          optFieldDec[ReferenceOr[RequestBody]](jObj, "requestBody"),
+          chunkMapFieldDec[ReferenceOr[Callback]](jObj, "callbacks"),
+          boolFieldDec(jObj, "deprecated"),
+          chunkFieldDec[SecurityRequirement](jObj, "security"),
+          chunkFieldDec[Server](jObj, "servers"),
           extractExtensions(jObj)
         )
-      case _ => Left(SchemaError("Expected Object for Components"))
+      case _ => error("Expected Json.Object for Operation")
     }
-  }
 
-  // ---------------------------------------------------------------------------
-  // OpenAPI
-  // ---------------------------------------------------------------------------
-
-  implicit lazy val openAPIJsonEncoder: JsonEncoder[OpenAPI] = JsonEncoder.instance[OpenAPI] { api =>
-    withExtensions(
+    override def encodeValue(x: Operation): Json = withExtensions(
       obj(
-        "openapi"           -> field(api.openapi),
-        "info"              -> field(api.info)(infoJsonEncoder),
-        "jsonSchemaDialect" -> optField(api.jsonSchemaDialect),
-        "servers"           -> chunkField(api.servers)(serverJsonEncoder),
-        "paths"             -> optField(api.paths)(pathsJsonEncoder),
-        "webhooks"          -> chunkMapField(api.webhooks)(referenceOrJsonEncoder[PathItem](pathItemJsonEncoder)),
-        "components"        -> optField(api.components)(componentsJsonEncoder),
-        "security"          -> chunkField(api.security)(securityRequirementJsonEncoder),
-        "tags"              -> chunkField(api.tags)(tagJsonEncoder),
-        "externalDocs"      -> optField(api.externalDocs)(externalDocumentationJsonEncoder)
+        "responses"    -> field(x.responses),
+        "tags"         -> chunkField(x.tags),
+        "summary"      -> optField(x.summary),
+        "description"  -> optField(x.description),
+        "externalDocs" -> optField(x.externalDocs),
+        "operationId"  -> optField(x.operationId),
+        "parameters"   -> chunkField(x.parameters),
+        "requestBody"  -> optField(x.requestBody),
+        "callbacks"    -> chunkMapField(x.callbacks),
+        "deprecated"   -> boolField(x.deprecated),
+        "security"     -> chunkField(x.security),
+        "servers"      -> chunkField(x.servers)
       ),
-      api.extensions
+      x.extensions
     )
   }
-
-  implicit lazy val openAPIJsonDecoder: JsonDecoder[OpenAPI] = JsonDecoder.instance[OpenAPI] { json =>
-    json match {
+  private[openapi] implicit lazy val pathItemCodec: JsonCodec[PathItem] = new JsonASTCodec[PathItem] {
+    override def decodeValue(json: Json): PathItem = json match {
       case jObj: Json.Object =>
-        for {
-          openapi           <- reqField[String](jObj, "openapi")
-          info              <- reqField[Info](jObj, "info")(infoJsonDecoder)
-          jsonSchemaDialect <- optFieldDec[String](jObj, "jsonSchemaDialect")
-          servers           <- chunkFieldDec[Server](jObj, "servers")(serverJsonDecoder)
-          paths             <- optFieldDec[Paths](jObj, "paths")(pathsJsonDecoder)
-          webhooks          <- chunkMapFieldDec[ReferenceOr[PathItem]](jObj, "webhooks")(
-                        referenceOrJsonDecoder[PathItem](pathItemJsonDecoder)
-                      )
-          components   <- optFieldDec[Components](jObj, "components")(componentsJsonDecoder)
-          security     <- chunkFieldDec[SecurityRequirement](jObj, "security")(securityRequirementJsonDecoder)
-          tags         <- chunkFieldDec[Tag](jObj, "tags")(tagJsonDecoder)
-          externalDocs <- optFieldDec[ExternalDocumentation](jObj, "externalDocs")(externalDocumentationJsonDecoder)
-        } yield OpenAPI(
-          openapi,
-          info,
-          jsonSchemaDialect,
-          servers,
-          paths,
-          webhooks,
-          components,
-          security,
-          tags,
-          externalDocs,
+        new PathItem(
+          optFieldDec[Doc](jObj, "summary"),
+          optFieldDec[Doc](jObj, "description"),
+          optFieldDec[Operation](jObj, "get"),
+          optFieldDec[Operation](jObj, "put"),
+          optFieldDec[Operation](jObj, "post"),
+          optFieldDec[Operation](jObj, "delete"),
+          optFieldDec[Operation](jObj, "options"),
+          optFieldDec[Operation](jObj, "head"),
+          optFieldDec[Operation](jObj, "patch"),
+          optFieldDec[Operation](jObj, "trace"),
+          chunkFieldDec[Server](jObj, "servers"),
+          chunkFieldDec[ReferenceOr[Parameter]](jObj, "parameters"),
           extractExtensions(jObj)
         )
-      case _ => Left(SchemaError("Expected Object for OpenAPI"))
+      case _ => error("Expected Json.Object for PathItem")
     }
+
+    override def encodeValue(x: PathItem): Json = withExtensions(
+      obj(
+        "summary"     -> optField(x.summary),
+        "description" -> optField(x.description),
+        "get"         -> optField(x.get),
+        "put"         -> optField(x.put),
+        "post"        -> optField(x.post),
+        "delete"      -> optField(x.delete),
+        "options"     -> optField(x.options),
+        "head"        -> optField(x.head),
+        "patch"       -> optField(x.patch),
+        "trace"       -> optField(x.trace),
+        "servers"     -> chunkField(x.servers),
+        "parameters"  -> chunkField(x.parameters)
+      ),
+      x.extensions
+    )
+  }
+  private[openapi] implicit lazy val pathsCodec: JsonCodec[Paths] = new JsonASTCodec[Paths] {
+    override def decodeValue(json: Json): Paths = json match {
+      case jObj: Json.Object =>
+        val ext   = extractExtensions(jObj)
+        val paths = jObj.value
+          .foldLeft(new ChunkMap.ChunkMapBuilder[String, PathItem]) { case (acc, (k, v)) =>
+            if (!k.startsWith("x-")) acc.add(k, pathItemCodec.decodeValue(v))
+            acc
+          }
+          .result()
+        new Paths(paths, ext)
+      case _ => error("Expected Json.Object for Paths")
+    }
+
+    override def encodeValue(x: Paths): Json = {
+      val pathFields = ChunkBuilder.make[(String, Json)](x.paths.size + x.extensions.size)
+      x.paths.foreach { case (k, v) => pathFields.addOne((k, pathItemCodec.encodeValue(v))) }
+      new Json.Object(pathFields.addAll(x.extensions).result())
+    }
+  }
+  private[openapi] implicit lazy val componentsCodec: JsonCodec[Components] = new JsonASTCodec[Components] {
+    override def decodeValue(json: Json): Components = json match {
+      case jObj: Json.Object =>
+        new Components(
+          chunkMapFieldDec[ReferenceOr[SchemaObject]](jObj, "schemas"),
+          chunkMapFieldDec[ReferenceOr[Response]](jObj, "responses"),
+          chunkMapFieldDec[ReferenceOr[Parameter]](jObj, "parameters"),
+          chunkMapFieldDec[ReferenceOr[Example]](jObj, "examples"),
+          chunkMapFieldDec[ReferenceOr[RequestBody]](jObj, "requestBodies"),
+          chunkMapFieldDec[ReferenceOr[Header]](jObj, "headers"),
+          chunkMapFieldDec[ReferenceOr[SecurityScheme]](jObj, "securitySchemes"),
+          chunkMapFieldDec[ReferenceOr[Link]](jObj, "links"),
+          chunkMapFieldDec[ReferenceOr[Callback]](jObj, "callbacks"),
+          chunkMapFieldDec[ReferenceOr[PathItem]](jObj, "pathItems"),
+          extractExtensions(jObj)
+        )
+      case _ => error("Expected Json.Object for Components")
+    }
+
+    override def encodeValue(x: Components): Json = withExtensions(
+      obj(
+        "schemas"         -> chunkMapField(x.schemas),
+        "responses"       -> chunkMapField(x.responses),
+        "parameters"      -> chunkMapField(x.parameters),
+        "examples"        -> chunkMapField(x.examples),
+        "requestBodies"   -> chunkMapField(x.requestBodies),
+        "headers"         -> chunkMapField(x.headers),
+        "securitySchemes" -> chunkMapField(x.securitySchemes),
+        "links"           -> chunkMapField(x.links),
+        "callbacks"       -> chunkMapField(x.callbacks),
+        "pathItems"       -> chunkMapField(x.pathItems)
+      ),
+      x.extensions
+    )
+  }
+  implicit lazy val openAPICodec: JsonCodec[OpenAPI] = new JsonASTCodec[OpenAPI] {
+    override def decodeValue(json: Json): OpenAPI = json match {
+      case jObj: Json.Object =>
+        new OpenAPI(
+          reqField[String](jObj, "openapi"),
+          reqField[Info](jObj, "info"),
+          optFieldDec[String](jObj, "jsonSchemaDialect"),
+          chunkFieldDec[Server](jObj, "servers"),
+          optFieldDec[Paths](jObj, "paths"),
+          chunkMapFieldDec[ReferenceOr[PathItem]](jObj, "webhooks"),
+          optFieldDec[Components](jObj, "components"),
+          chunkFieldDec[SecurityRequirement](jObj, "security"),
+          chunkFieldDec[Tag](jObj, "tags"),
+          optFieldDec[ExternalDocumentation](jObj, "externalDocs"),
+          extractExtensions(jObj)
+        )
+      case _ => error("Expected Json.Object for OpenAPI")
+    }
+
+    override def encodeValue(x: OpenAPI): Json = withExtensions(
+      obj(
+        "openapi"           -> field(x.openapi),
+        "info"              -> field(x.info),
+        "jsonSchemaDialect" -> optField(x.jsonSchemaDialect),
+        "servers"           -> chunkField(x.servers),
+        "paths"             -> optField(x.paths),
+        "webhooks"          -> chunkMapField(x.webhooks),
+        "components"        -> optField(x.components),
+        "security"          -> chunkField(x.security),
+        "tags"              -> chunkField(x.tags),
+        "externalDocs"      -> optField(x.externalDocs)
+      ),
+      x.extensions
+    )
   }
 }

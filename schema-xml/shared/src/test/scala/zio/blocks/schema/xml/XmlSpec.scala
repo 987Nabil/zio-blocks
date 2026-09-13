@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema.xml
 
 import zio.blocks.chunk.Chunk
@@ -275,16 +291,12 @@ object XmlSpec extends SchemaBaseSpec {
       test("printPretty renders indented XML") {
         val elem   = Xml.Element("root", Xml.Element("child"))
         val result = elem.printPretty
-        assertTrue(
-          result.contains("<root>"),
-          result.contains("  <child"),
-          result.contains("</root>")
-        )
+        assertTrue(result == "<root>\n  <child/>\n</root>")
       },
       test("print with custom config") {
-        val elem   = Xml.Element("root")
+        val elem   = Xml.Element("root", Xml.Element("child"))
         val result = elem.print(WriterConfig(indentStep = 4))
-        assertTrue(result.contains("<root"))
+        assertTrue(result == "<root>\n    <child/>\n</root>")
       },
       test("Text node equality and hashCode") {
         val t1 = Xml.Text("hello")

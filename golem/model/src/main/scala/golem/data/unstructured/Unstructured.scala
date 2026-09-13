@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package golem.data.unstructured
 
 import golem.data.SchemaHelpers.singleElementValue
@@ -110,6 +126,18 @@ object TextSegment {
           case other =>
             Left(s"Expected unstructured-text element, found $other")
         }
+
+      override def elementSchema: ElementSchema =
+        ElementSchema.UnstructuredText(allowed.codes)
+
+      override def encodeElement(value: TextSegment[Lang]): Either[String, ElementValue] =
+        Right(ElementValue.UnstructuredText(value.value))
+
+      override def decodeElement(value: ElementValue): Either[String, TextSegment[Lang]] =
+        value match {
+          case ElementValue.UnstructuredText(v) => Right(TextSegment(v))
+          case other                            => Left(s"Expected unstructured-text element, found: ${other.getClass.getSimpleName}")
+        }
     }
 }
 
@@ -171,6 +199,18 @@ object BinarySegment {
             Right(BinarySegment(binaryValue))
           case other =>
             Left(s"Expected unstructured-binary element, found $other")
+        }
+
+      override def elementSchema: ElementSchema =
+        ElementSchema.UnstructuredBinary(allowed.mimeTypes)
+
+      override def encodeElement(value: BinarySegment[Descriptor]): Either[String, ElementValue] =
+        Right(ElementValue.UnstructuredBinary(value.value))
+
+      override def decodeElement(value: ElementValue): Either[String, BinarySegment[Descriptor]] =
+        value match {
+          case ElementValue.UnstructuredBinary(v) => Right(BinarySegment(v))
+          case other                              => Left(s"Expected unstructured-binary element, found: ${other.getClass.getSimpleName}")
         }
     }
 }

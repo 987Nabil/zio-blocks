@@ -1,8 +1,25 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema.yaml
 
+import zio.blocks.schema.SchemaBaseSpec
 import zio.test._
 
-object YamlInterpolatorRuntimeSpec extends YamlBaseSpec {
+object YamlInterpolatorRuntimeSpec extends SchemaBaseSpec {
 
   def spec: Spec[TestEnvironment, Any] = suite("YamlInterpolatorRuntime")(
     suite("validateYamlLiteral")(
@@ -32,8 +49,8 @@ object YamlInterpolatorRuntimeSpec extends YamlBaseSpec {
           YamlInterpolatorRuntime.validateYamlLiteral(sc, Seq.empty)
           true
         } catch {
-          case _: YamlError => true
-          case _: Throwable => false
+          case _: YamlCodecError => true
+          case _: Throwable      => false
         }
         assertTrue(completed)
       }
@@ -537,7 +554,7 @@ object YamlInterpolatorRuntimeSpec extends YamlBaseSpec {
         )
         assertTrue(result != null)
       }
-    ) @@ TestAspect.jvmOnly,
+    ),
     suite("java.time types in value context")(
       test("DayOfWeek in value") {
         val sc     = new StringContext("key: ", "")
@@ -701,7 +718,7 @@ object YamlInterpolatorRuntimeSpec extends YamlBaseSpec {
         )
         assertTrue(result.isInstanceOf[Yaml.Mapping])
       }
-    ) @@ TestAspect.jvmOnly,
+    ),
     suite("java.time types in InString context")(
       test("Duration in string") {
         val sc     = new StringContext("key: \"", "\"")
@@ -865,7 +882,7 @@ object YamlInterpolatorRuntimeSpec extends YamlBaseSpec {
         )
         assertTrue(result.isInstanceOf[Yaml.Mapping])
       }
-    ) @@ TestAspect.jvmOnly,
+    ),
     suite("needsQuoting in interpolator")(
       test("quoting special values in key position") {
         val sc     = new StringContext("key-", ": value")

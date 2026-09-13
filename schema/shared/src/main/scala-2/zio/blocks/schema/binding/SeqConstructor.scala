@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema.binding
 
 import scala.collection.immutable.ArraySeq
@@ -8,7 +24,7 @@ import zio.blocks.chunk.{Chunk, ChunkBuilder}
 trait SeqConstructor[C[_]] {
   type Builder[_]
 
-  def newBuilder[A](sizeHint: Int = 8)(implicit ct: ClassTag[A]): Builder[A]
+  def newBuilder[A](sizeHint: Int = 4)(implicit ct: ClassTag[A]): Builder[A]
 
   def add[A](builder: Builder[A], a: A): Unit
 
@@ -27,6 +43,8 @@ trait SeqConstructor[C[_]] {
 }
 
 object SeqConstructor {
+  class ArrayBuilder[A](var buffer: Array[A], var size: Int, val ct: ClassTag[A])
+
   implicit val setConstructor: SeqConstructor[Set] = new SeqConstructor[Set] {
     type Builder[A] = scala.collection.mutable.Builder[A, Set[A]]
 
@@ -64,24 +82,21 @@ object SeqConstructor {
   }
 
   private[binding] abstract class PrimitiveArraySeqConstructor[C[_]] extends SeqConstructor[C] {
-    case class ArrayBuilder[A](var buffer: Array[A], var size: Int, ct: ClassTag[A])
-
     type Builder[A] = ArrayBuilder[A]
 
     def newBuilder[A](sizeHint: Int)(implicit ct: ClassTag[A]): Builder[A] =
       new ArrayBuilder(ct.newArray(Math.max(sizeHint, 1)), 0, ct)
 
     def add[A](builder: Builder[A], a: A): Unit = {
-      val buf = builder.buffer
+      var buf = builder.buffer
       val idx = builder.size
       if (buf.length == idx) {
         val newBuf = builder.ct.newArray(idx << 1)
         System.arraycopy(buf, 0, newBuf, 0, idx)
+        buf = newBuf
         builder.buffer = newBuf
-        newBuf(idx) = a
-      } else {
-        buf(idx) = a
       }
+      buf(idx) = a
       builder.size = idx + 1
     }
 
@@ -218,7 +233,7 @@ object SeqConstructor {
   implicit val chunkConstructor: SeqConstructor[Chunk] = new SeqConstructor[Chunk] {
     type Builder[A] = ChunkBuilder[A]
 
-    def newBuilder[A](sizeHint: Int)(implicit ct: ClassTag[A]): Builder[A] = ChunkBuilder.make[A]()
+    def newBuilder[A](sizeHint: Int)(implicit ct: ClassTag[A]): Builder[A] = ChunkBuilder.make[A](sizeHint)
 
     def add[A](builder: Builder[A], a: A): Unit = builder.addOne(a)
 

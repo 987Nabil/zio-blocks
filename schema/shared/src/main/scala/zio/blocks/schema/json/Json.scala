@@ -43,7 +43,7 @@ import scala.util.hashing.MurmurHash3
 sealed trait Json {
 
   /** Pretty print Json value to string. */
-  override def toString: String = print(WriterConfig.withIndentionStep2)
+  override def toString: String = Json.jsonCodec.encodeToString(this, WriterConfig.withIndentionStep2)
 
   // ─────────────────────────────────────────────────────────────────────────
   // Type Information
@@ -258,13 +258,13 @@ sealed trait Json {
    * Decodes this JSON value to a value of type A using the implicit
    * JsonDecoder.
    */
-  def as[A](implicit decoder: JsonDecoder[A]): Either[SchemaError, A] = decoder.decode(this)
+  def as[A](implicit schema: Schema[A]): Either[SchemaError, A] = schema.jsonCodec.decode(this)
 
   /**
    * Decodes this JSON value to a value of type A, throwing SchemaError on
    * failure.
    */
-  def asUnsafe[A](implicit decoder: JsonDecoder[A]): A = decoder.decode(this) match {
+  def asUnsafe[A](implicit schema: Schema[A]): A = schema.jsonCodec.decode(this) match {
     case Right(value) => value
     case Left(err)    => throw err
   }
@@ -593,10 +593,9 @@ object Json {
         val v2 = v1.normalize
         if (
           v2 match {
-            case obj: Object  => obj.value.nonEmpty
-            case arr: Array   => arr.value.nonEmpty
-            case _: Null.type => false
-            case _            => true
+            case obj: Object => obj.value.nonEmpty
+            case arr: Array  => arr.value.nonEmpty
+            case _           => v2 ne Null
           }
         ) {
           arr(size) =
@@ -734,10 +733,9 @@ object Json {
         val v = value(idx).normalize
         if (
           v match {
-            case obj: Object  => obj.value.nonEmpty
-            case arr: Array   => arr.value.nonEmpty
-            case _: Null.type => false
-            case _            => true
+            case obj: Object => obj.value.nonEmpty
+            case arr: Array  => arr.value.nonEmpty
+            case _           => v ne Null
           }
         ) {
           arr(size) = v
@@ -1001,7 +999,7 @@ object Json {
     case v: PrimitiveValue.Boolean        => Boolean(v.value)
     case v: PrimitiveValue.Byte           => Number(v.value)
     case v: PrimitiveValue.Short          => Number(v.value)
-    case v: PrimitiveValue.Char           => new String(v.value.toString)
+    case v: PrimitiveValue.Char           => new String(java.lang.String.valueOf(v.value))
     case v: PrimitiveValue.BigInt         => Number(v.value)
     case v: PrimitiveValue.BigDecimal     => Number(v.value)
     case v: PrimitiveValue.DayOfWeek      => new String(v.value.toString)
@@ -1429,13 +1427,14 @@ object Json {
       case arr: Array =>
         val elems = arr.value
         if (elems.isEmpty) Chunk.single((path, arr))
-        else
+        else {
           elems.flatMap {
             var idx = -1
             elem =>
               idx += 1
               toKV(elem, path.at(idx))
           }
+        }
       case leaf => Chunk.single((path, leaf))
     }
 
@@ -1446,7 +1445,7 @@ object Json {
   /**
    * Creates a Json value from an encoder.
    */
-  def from[A](value: A)(implicit encoder: JsonEncoder[A]): Json = encoder.encode(value)
+  def from[A](value: A)(implicit schema: Schema[A]): Json = schema.jsonCodec.encodeValue(value)
 
   /**
    * Reconstructs a JSON value from path-value pairs. Returns Left if the paths
@@ -1466,9 +1465,9 @@ object Json {
    */
   def fromKVUnsafe(kvs: Seq[(DynamicOptic, Json)]): Json = {
     val len = kvs.length
-    if (len == 0) return Null
-    if (len == 1 && kvs.head._1.nodes.isEmpty) return kvs.head._2 // Simple case: single root value
-    kvs.foldLeft[Json](Null)((acc, pv) => setOrCreatePath(acc, pv._1, pv._2))
+    if (len == 0) Null
+    else if (len == 1 && kvs.head._1.nodes.isEmpty) kvs.head._2 // Simple case: single root value
+    else kvs.foldLeft[Json](Null)((acc, pv) => setOrCreatePath(acc, pv._1, pv._2))
   }
 
   private[this] def setOrCreatePath(json: Json, path: DynamicOptic, value: Json): Json = {
@@ -1896,7 +1895,15 @@ object Json {
           }
         case _ =>
           // For other node types, delegate to a non-failing version and wrap the result
-          modifyAtPathRecursive(json, nodes.drop(nodeIdx), 0, pf.lift.andThen(_.getOrElse(json))) match {
+          modifyAtPathRecursive(
+            json,
+            nodes.drop(nodeIdx),
+            0,
+            x => {
+              if (pf.isDefinedAt(x)) pf.apply(x)
+              else json
+            }
+          ) match {
             case some: Some[_] => new Right(some.value)
             case _             => new Left(SchemaError(s"Path not found: ${new DynamicOptic(nodes)}"))
           }
@@ -1966,11 +1973,9 @@ object Json {
       case _: DynamicOptic.Node.Elements.type =>
         json match {
           case arr: Array =>
-            new Some(if (isLast) {
-              // Delete all elements
+            new Some(if (isLast) { // Delete all elements
               Array.empty
-            } else {
-              // Apply delete to each element
+            } else { // Apply delete to each element
               new Array(arr.value.flatMap(e => deleteAtPathRecursive(e, nodes, idx + 1)))
             })
           case _ => None
@@ -2129,7 +2134,7 @@ object Json {
   implicit val ordering: Ordering[Json] = (x: Json, y: Json) => x.compare(y)
 
   // ─────────────────────────────────────────────────────────────────────────
-  // JsonBinaryCodec for Json
+  // JsonCodec for Json
   // ─────────────────────────────────────────────────────────────────────────
 
   implicit lazy val nullSchema: Schema[Null.type] = new Schema(
@@ -2331,7 +2336,7 @@ object Json {
     )
   )
 
-  implicit val jsonCodec: JsonBinaryCodec[Json] = new JsonBinaryCodec[Json] {
+  val jsonCodec: JsonCodec[Json] = new JsonCodec[Json] {
     override def decodeValue(in: JsonReader): Json = {
       var x = in.nextToken().toInt
       if (x == '"') {
@@ -2339,7 +2344,8 @@ object Json {
         new String(in.readString())
       } else if (x == 'f' || x == 't') {
         in.rollbackToken()
-        Boolean.apply(in.readBoolean())
+        if (in.readBoolean()) Json.True
+        else Json.False
       } else if (x >= '0' && x <= '9' || x == '-') {
         in.rollbackToken()
         new Number(in.readBigDecimal())
@@ -2361,7 +2367,7 @@ object Json {
               if (arr.length == x) arr = util.Arrays.copyOf(arr, x << 1)
             }
           } catch {
-            case error if NonFatal(error) && errIdx >= 0 => in.decodeError(new DynamicOptic.Node.AtIndex(errIdx), error)
+            case err if NonFatal(err) && errIdx >= 0 => error(new DynamicOptic.Node.AtIndex(errIdx), err)
           }
           if (in.isCurrentToken(']')) {
             if (arr.length != x) arr = util.Arrays.copyOf(arr, x)
@@ -2386,7 +2392,7 @@ object Json {
               if (arr.length == x) arr = util.Arrays.copyOf(arr, x << 1)
             }
           } catch {
-            case error if NonFatal(error) && (key ne null) => in.decodeError(new DynamicOptic.Node.Field(key), error)
+            case err if NonFatal(err) && (key ne null) => error(new DynamicOptic.Node.Field(key), err)
           }
           if (in.isCurrentToken('}')) {
             if (arr.length != x) arr = util.Arrays.copyOf(arr, x)
@@ -2401,122 +2407,110 @@ object Json {
 
     override def encodeValue(x: Json, out: JsonWriter): Unit = x match {
       case str: String   => out.writeVal(str.value)
-      case bool: Boolean => out.writeVal(bool.value)
       case num: Number   => out.writeVal(num.value)
+      case bool: Boolean => out.writeVal(bool.value)
       case arr: Array    =>
         out.writeArrayStart()
-        arr.value.foreach(encodeValue(_, out))
+        val elems = arr.value
+        val len   = elems.length
+        var idx   = 0
+        while (idx < len) {
+          encodeValue(elems(idx), out)
+          idx += 1
+        }
         out.writeArrayEnd()
       case obj: Object =>
         out.writeObjectStart()
-        obj.value.foreach { kv =>
+        val kvs = obj.value
+        val len = kvs.length
+        var idx = 0
+        while (idx < len) {
+          val kv = kvs(idx)
           out.writeKey(kv._1)
           encodeValue(kv._2, out)
+          idx += 1
         }
         out.writeObjectEnd()
       case _ => out.writeNull()
     }
+
+    override def decodeValue(json: Json): Json = json
+
+    override def encodeValue(x: Json): Json = x
   }
 
-  private[schema] val durationRawCodec = new JsonBinaryCodec[Duration] {
+  private[schema] val durationRawCodec = new JsonCodec[Duration] {
     override def decodeValue(in: JsonReader): Duration = in.readRawValAsDuration()
 
     override def encodeValue(x: Duration, out: JsonWriter): Unit = out.writeRawVal(x)
   }
-
-  private[schema] val instantRawCodec = new JsonBinaryCodec[Instant] {
+  private[schema] val instantRawCodec = new JsonCodec[Instant] {
     override def decodeValue(in: JsonReader): Instant = in.readRawValAsInstant()
 
     override def encodeValue(x: Instant, out: JsonWriter): Unit = out.writeRawVal(x)
   }
-
-  private[schema] val localDateRawCodec = new JsonBinaryCodec[LocalDate] {
+  private[schema] val localDateRawCodec = new JsonCodec[LocalDate] {
     override def decodeValue(in: JsonReader): LocalDate = in.readRawValAsLocalDate()
 
     override def encodeValue(x: LocalDate, out: JsonWriter): Unit = out.writeRawVal(x)
   }
-
-  private[schema] val localDateTimeRawCodec = new JsonBinaryCodec[LocalDateTime] {
+  private[schema] val localDateTimeRawCodec = new JsonCodec[LocalDateTime] {
     override def decodeValue(in: JsonReader): LocalDateTime = in.readRawValAsLocalDateTime()
 
     override def encodeValue(x: LocalDateTime, out: JsonWriter): Unit = out.writeRawVal(x)
   }
-
-  private[schema] val localTimeRawCodec = new JsonBinaryCodec[LocalTime] {
+  private[schema] val localTimeRawCodec = new JsonCodec[LocalTime] {
     override def decodeValue(in: JsonReader): LocalTime = in.readRawValAsLocalTime()
 
     override def encodeValue(x: LocalTime, out: JsonWriter): Unit = out.writeRawVal(x)
   }
-
-  private[schema] val monthDayRawCodec = new JsonBinaryCodec[MonthDay] {
+  private[schema] val monthDayRawCodec = new JsonCodec[MonthDay] {
     override def decodeValue(in: JsonReader): MonthDay = in.readRawValAsMonthDay()
 
     override def encodeValue(x: MonthDay, out: JsonWriter): Unit = out.writeRawVal(x)
   }
-
-  private[schema] val offsetDateTimeRawCodec = new JsonBinaryCodec[OffsetDateTime] {
+  private[schema] val offsetDateTimeRawCodec = new JsonCodec[OffsetDateTime] {
     override def decodeValue(in: JsonReader): OffsetDateTime = in.readRawValAsOffsetDateTime()
 
     override def encodeValue(x: OffsetDateTime, out: JsonWriter): Unit = out.writeRawVal(x)
   }
-
-  private[schema] val offsetTimeRawCodec = new JsonBinaryCodec[OffsetTime] {
+  private[schema] val offsetTimeRawCodec = new JsonCodec[OffsetTime] {
     override def decodeValue(in: JsonReader): OffsetTime = in.readRawValAsOffsetTime()
 
     override def encodeValue(x: OffsetTime, out: JsonWriter): Unit = out.writeRawVal(x)
   }
-
-  private[schema] val periodRawCodec = new JsonBinaryCodec[Period] {
+  private[schema] val periodRawCodec = new JsonCodec[Period] {
     override def decodeValue(in: JsonReader): Period = in.readRawValAsPeriod()
 
     override def encodeValue(x: Period, out: JsonWriter): Unit = out.writeRawVal(x)
   }
-
-  private[schema] val zonedDateTimeRawCodec = new JsonBinaryCodec[ZonedDateTime] {
+  private[schema] val zonedDateTimeRawCodec = new JsonCodec[ZonedDateTime] {
     override def decodeValue(in: JsonReader): ZonedDateTime = in.readRawValAsZonedDateTime()
 
     override def encodeValue(x: ZonedDateTime, out: JsonWriter): Unit = out.writeRawVal(x)
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // SchemaSearch Helper Functions
-  // ─────────────────────────────────────────────────────────────────────────
-
   /**
    * Iterative stack-based depth-first traversal to collect all JSON values
-   * matching a SchemaRepr pattern. Order is depth-first, left-to-right
-   * (children are pushed in reverse order). The root values themselves are
-   * included if they match the pattern.
+   * matching a SchemaRepr pattern without recursion that could lead to stack
+   * overflow. Order is depth-first, left-to-right (children are pushed in
+   * reverse order). The root values themselves are included if they match the
+   * pattern.
    */
-  private def schemaSearchCollectJson(roots: Chunk[Json], pattern: SchemaRepr): Chunk[Json] = {
-    // Use a mutable list stack for iteration (avoids recursion stack overflow)
-    var stack: List[Json]                                   = roots.iterator.toList
-    val results: scala.collection.mutable.ArrayBuffer[Json] = scala.collection.mutable.ArrayBuffer.empty
-
+  private[this] def schemaSearchCollectJson(roots: Chunk[Json], pattern: SchemaRepr): Chunk[Json] = {
+    var stack = roots.toList
+    val jsons = ChunkBuilder.make[Json]()
     while (stack.nonEmpty) {
       val current = stack.head
       stack = stack.tail
-
-      // Check if current matches the pattern
-      if (JsonMatch.matches(pattern, current)) {
-        results += current
-      }
-
-      // Push children onto stack - first child should be at top for left-to-right DFS
+      if (JsonMatch.matches(pattern, current)) jsons.addOne(current)
       current match {
-        case obj: Object =>
-          // First field's value goes to top of stack, processed first
-          stack = obj.value.iterator.map(_._2).toList ++ stack
-        case arr: Array =>
-          // First element goes to top of stack, processed first
-          stack = arr.value.iterator.toList ++ stack
-        case _ =>
-          // Primitives (String, Number, Boolean, Null) have no children
-          ()
+        case obj: Object => stack = obj.value.foldRight(stack)(_._2 :: _)
+        case arr: Array  => stack = arr.value.foldRight(stack)(_ :: _)
+        case _           =>
       }
     }
-
-    Chunk.from(results)
+    jsons.result()
   }
 
   /**
@@ -2524,69 +2518,86 @@ object Json {
    * node, then reconstructs the tree bottom-up using an explicit stack to avoid
    * stack overflow on deeply nested structures.
    */
-  private[schema] def iterativeTransform(root: Json)(visit: Json => Json): Json = {
+  private[json] def iterativeTransform(root: Json)(visit: Json => Json): Json = {
     sealed trait Frame
-    final case class Visit(value: Json)                               extends Frame
-    final case class RebuildObject(original: Object, childCount: Int) extends Frame
-    final case class RebuildArray(original: Array, childCount: Int)   extends Frame
+
+    final class Visit(val value: Json) extends Frame
+
+    final class RebuildObject(val original: Object, val childCount: Int) extends Frame
+
+    final class RebuildArray(val original: Array, val childCount: Int) extends Frame
 
     val work    = new java.util.ArrayDeque[Frame]()
     val results = new java.util.ArrayDeque[Json]()
-    work.push(Visit(root))
-
+    work.push(new Visit(root))
     while (!work.isEmpty) {
       work.pop() match {
-        case Visit(value) =>
-          val visited = visit(value)
+        case v: Visit =>
+          val visited = visit(v.value)
           visited match {
             case obj: Object =>
-              val n = obj.value.length
-              if (n == 0) {
-                results.push(visited)
-              } else {
-                work.push(RebuildObject(obj, n))
-                var i = n - 1
-                while (i >= 0) { work.push(Visit(obj.value(i)._2)); i -= 1 }
+              val len = obj.value.length
+              if (len == 0) results.push(visited)
+              else {
+                work.push(new RebuildObject(obj, len))
+                var idx = len
+                while ({
+                  idx -= 1
+                  idx >= 0
+                }) work.push(new Visit(obj.value(idx)._2))
               }
             case arr: Array =>
-              val n = arr.value.length
-              if (n == 0) {
-                results.push(visited)
-              } else {
-                work.push(RebuildArray(arr, n))
-                var i = n - 1
-                while (i >= 0) { work.push(Visit(arr.value(i))); i -= 1 }
+              val len = arr.value.length
+              if (len == 0) results.push(visited)
+              else {
+                work.push(new RebuildArray(arr, len))
+                var idx = len
+                while ({
+                  idx -= 1
+                  idx >= 0
+                }) work.push(new Visit(arr.value(idx)))
               }
-            case _ =>
-              results.push(visited)
+            case _ => results.push(visited)
           }
-
-        case RebuildObject(original, childCount) =>
-          var changed = false
-          val fields  = new scala.Array[(java.lang.String, Json)](childCount)
-          var i       = childCount - 1
-          while (i >= 0) {
+        case ro: RebuildObject =>
+          val original   = ro.original
+          val childCount = ro.childCount
+          val fields     = new scala.Array[(java.lang.String, Json)](childCount)
+          var changed    = false
+          var idx        = childCount
+          while ({
+            idx -= 1
+            idx >= 0
+          }) {
             val child = results.pop()
-            if (!(child eq original.value(i)._2)) changed = true
-            fields(i) = (original.value(i)._1, child)
-            i -= 1
+            val value = original.value(idx)
+            if (child ne value._2) changed = true
+            fields(idx) = (value._1, child)
           }
-          results.push(if (changed) new Object(Chunk.fromArray(fields)) else original)
-
-        case RebuildArray(original, childCount) =>
-          var changed = false
-          val elems   = new scala.Array[Json](childCount)
-          var i       = childCount - 1
-          while (i >= 0) {
+          results.push(
+            if (changed) new Object(Chunk.fromArray(fields))
+            else original
+          )
+        case ra: RebuildArray =>
+          val original   = ra.original
+          val childCount = ra.childCount
+          val elems      = new scala.Array[Json](childCount)
+          var changed    = false
+          var idx        = childCount
+          while ({
+            idx -= 1
+            idx >= 0
+          }) {
             val child = results.pop()
-            if (!(child eq original.value(i))) changed = true
-            elems(i) = child
-            i -= 1
+            if (child ne original.value(idx)) changed = true
+            elems(idx) = child
           }
-          results.push(if (changed) new Array(Chunk.fromArray(elems)) else original)
+          results.push(
+            if (changed) new Array(Chunk.fromArray(elems))
+            else original
+          )
       }
     }
-
     results.pop()
   }
 
@@ -2595,7 +2606,7 @@ object Json {
    * remaining path nodes. Uses iterative stack-based traversal to avoid stack
    * overflow on deeply nested structures.
    */
-  private def schemaSearchModifyJson(
+  private[this] def schemaSearchModifyJson(
     json: Json,
     pattern: SchemaRepr,
     nodes: IndexedSeq[DynamicOptic.Node],
@@ -2609,13 +2620,12 @@ object Json {
           case Some(modified) =>
             found = true
             modified
-          case None => value
+          case _ => value
         }
-      } else {
-        value
-      }
+      } else value
     }
-    if (found) Some(result) else None
+    if (found) new Some(result)
+    else None
   }
 
   /**
@@ -2631,31 +2641,35 @@ object Json {
   ): Option[Json] = {
     val isLast = nodeIdx == nodes.length - 1
     var found  = false
-
     if (isLast) {
       // SchemaSearch is the last node - delete matching values from containers.
       // The visit function filters out matching direct children at each container level;
       // iterativeTransform handles recursion into remaining children.
-      val result = iterativeTransform(json) { value =>
-        value match {
-          case obj: Object =>
-            val newFields = obj.value.flatMap { case (name, v) =>
-              if (JsonMatch.matches(pattern, v)) { found = true; Chunk.empty }
-              else Chunk((name, v))
-            }
-            if (newFields.length != obj.value.length) new Object(newFields) else obj
-          case arr: Array =>
-            val newElems = arr.value.flatMap { e =>
-              if (JsonMatch.matches(pattern, e)) { found = true; Chunk.empty }
-              else Chunk(e)
-            }
-            if (newElems.length != arr.value.length) new Array(newElems) else arr
-          case other => other
-        }
+      val result = iterativeTransform(json) {
+        case obj: Object =>
+          val fields    = obj.value
+          val newFields = ChunkBuilder.make[(java.lang.String, Json)](fields.length)
+          fields.foreach { kv =>
+            if (JsonMatch.matches(pattern, kv._2)) found = true
+            else newFields.addOne(kv)
+          }
+          if (newFields.knownSize != fields.length) new Object(newFields.result())
+          else obj
+        case arr: Array =>
+          val elems    = arr.value
+          val newElems = ChunkBuilder.make[Json](elems.length)
+          elems.foreach { e =>
+            if (JsonMatch.matches(pattern, e)) found = true
+            else newElems.addOne(e)
+          }
+          if (newElems.knownSize != elems.length) new Array(newElems.result())
+          else arr
+        case other => other
       }
-      if (found) Some(result) else None
+      if (found) new Some(result)
+      else None
     } else {
-      // SchemaSearch is not the last node - find matches and continue with remaining path.
+      // SchemaSearch is not the last node - find matches and continue with a remaining path.
       // iterativeTransform visits every node; matching ones get the remaining path applied.
       val result = iterativeTransform(json) { value =>
         if (JsonMatch.matches(pattern, value)) {
@@ -2663,11 +2677,12 @@ object Json {
             case Some(modified) =>
               found = true
               modified
-            case None => value
+            case _ => value
           }
         } else value
       }
-      if (found) Some(result) else None
+      if (found) new Some(result)
+      else None
     }
   }
 }
