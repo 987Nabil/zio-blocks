@@ -17,14 +17,14 @@
 package zio.blocks.sql
 
 /**
- * Structured, inspectable representation of a `SqlQuery` for a specific
- * dialect.
+ * Structured, inspectable representation of a [[zio.blocks.sql.query.SqlQuery]]
+ * for a specific dialect.
  *
- * Produced by [[SqlQuery.statement]] / `SqlQuery#build`; mirrors the same
+ * Produced by [[zio.blocks.sql.query.SqlQuery.statement]]; mirrors the same
  * joins, filters, grouping and pagination as the query but decomposed into
  * typed fields. The original [[Frag]] is retained as [[frag]] for re-rendering
  * or execution, and `statement.frag.params` aligns with the `?N` placeholders
- * shown by [[SqlQuery.explain]].
+ * shown by [[zio.blocks.sql.query.SqlQuery.explain]].
  */
 final case class SqlStatement(
   source: SqlStatement.Source,

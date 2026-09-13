@@ -16,7 +16,7 @@
 
 package zio.blocks.sql.query
 
-import zio.blocks.sql.{Frag, SqlDialect, SqlIdentifier, Table}
+import zio.blocks.sql.{DbValue, Frag, SqlDialect, SqlIdentifier, SqlStatement, Table}
 
 /**
  * Immutable query IR starting from a source table.
@@ -24,9 +24,9 @@ import zio.blocks.sql.{Frag, SqlDialect, SqlIdentifier, Table}
  * This is the blessed SELECT builder for new code (see the module decision
  * below): joins are validated through typed [[Rel]]s, rendering is performed by
  * [[QueryRenderer]] through `Frag.++` composition only, every identifier is
- * validated and double-quoted, and values always bind as `?` params. The legacy
- * stringly builder `zio.blocks.sql.SqlQuery` remains (deprecated) for
- * `SqlStatement`/`explain` inspection flows until the full merge lands.
+ * validated and double-quoted, and values always bind as `?` params. Use
+ * [[explain]] for human-readable logging and [[statement]] for structured
+ * inspection.
  *
  * Alias allocation is deterministic: t0 = source, t1..tN in join order
  * (self-join safe — same Table joined twice gets distinct aliases). Rendering
@@ -165,6 +165,130 @@ final case class SqlQuery[A] private[query] (
   def toFrag(dialect: SqlDialect): Frag = QueryRenderer.render(this, dialect)
 
   def sql(dialect: SqlDialect): String = toFrag(dialect).sql(dialect)
+
+  /**
+   * Structured, inspectable representation of this query for a specific
+   * dialect. Returns a [[SqlStatement]] mirroring the joins, filters, grouping
+   * and pagination decomposed into typed fields.
+   */
+  def statement(dialect: SqlDialect): SqlStatement = {
+    val frag = toFrag(dialect)
+    val src  = SqlStatement.Source(source.name, "t0")
+
+    val stJoins = joins.map { j =>
+      val onStr             = j.on.sql(dialect)
+      val Pattern           = """(t\d+)\."(\w+)" = (t\d+)\."(\w+)""".r
+      val (onLeft, onRight) = onStr match {
+        case Pattern(la, lc, ra, rc) =>
+          (SqlStatement.ColumnRef(la, lc), SqlStatement.ColumnRef(ra, rc))
+        case _ =>
+          (SqlStatement.ColumnRef("t0", "?"), SqlStatement.ColumnRef(j.alias, "?"))
+      }
+      val kind = j.kind match {
+        case JoinKind.Inner => SqlStatement.JoinKind.Inner
+        case JoinKind.Left  => SqlStatement.JoinKind.Left
+      }
+      SqlStatement.Join(kind, j.table.name, j.alias, onLeft, onRight)
+    }
+
+    def resolveColRef(col: String): SqlStatement.ColumnRef =
+      if (source.columns.contains(col)) SqlStatement.ColumnRef("t0", col)
+      else
+        joins.find(_.table.columns.contains(col)) match {
+          case Some(j) => SqlStatement.ColumnRef(j.alias, col)
+          case None    => SqlStatement.ColumnRef("t0", col)
+        }
+
+    val stFilters = frag.params.zipWithIndex.map { case (param, idx) =>
+      val parts     = frag.parts
+      val sqlBefore = if (idx < parts.length) parts(idx) else ""
+      val lastDot   = sqlBefore.lastIndexOf('.')
+      val lastSpace = sqlBefore.lastIndexOf(' ')
+      val alias     =
+        if (lastDot > 0 && lastSpace < lastDot) sqlBefore.substring(lastSpace + 1, lastDot).trim
+        else "t0"
+      val column =
+        if (lastDot > 0 && lastSpace < lastDot) sqlBefore.substring(lastDot + 1).trim.replaceAll("[^a-zA-Z0-9_]", "")
+        else "id"
+      val sqlAfter = if (idx + 1 < parts.length) parts(idx + 1).trim else ""
+      val op       = sqlAfter.split("\\s+").headOption.filter(_.nonEmpty).getOrElse("=")
+      SqlStatement.Filter(SqlStatement.ColumnRef(alias, column), op, param)
+    }.toVector
+
+    val stGroupBy =
+      if (groupBy.isEmpty) None
+      else Some(SqlStatement.GroupBy(groupBy.map(resolveColRef).toVector))
+
+    val stOrderBy = orderBy.map { o =>
+      SqlStatement.OrderBy(
+        resolveColRef(o.column),
+        o.direction match {
+          case SortOrder.Asc  => SqlStatement.OrderDirection.Asc
+          case SortOrder.Desc => SqlStatement.OrderDirection.Desc
+        }
+      )
+    }.toVector
+
+    SqlStatement(
+      source = src,
+      joins = stJoins,
+      filters = stFilters,
+      groupBy = stGroupBy,
+      orderBy = stOrderBy,
+      limit = limit.map(SqlStatement.Limit(_)),
+      offset = offset.map(SqlStatement.Offset(_)),
+      frag = frag
+    )
+  }
+
+  /**
+   * Renders this query as a human-readable SQL string with `?N`-style numbered
+   * placeholders and a `-- params: ...` footer listing each parameter's type.
+   * Useful for logging and debugging.
+   */
+  def explain(dialect: SqlDialect): String = {
+    val st   = statement(dialect)
+    val frag = st.frag
+    val sb   = new StringBuilder
+    var idx  = 1
+    var i    = 0
+    while (i < frag.parts.length) {
+      sb.append(frag.parts(i))
+      if (i < frag.params.length) {
+        sb.append(s"?$idx")
+        idx += 1
+      }
+      i += 1
+    }
+    val sql = sb.toString()
+    if (frag.params.isEmpty) s"$sql\n-- params: (none)"
+    else {
+      val types = frag.params.zipWithIndex.map { case (v, n) => s"${n + 1}:${typeLabel(v)}" }.mkString(", ")
+      s"$sql\n-- params: $types"
+    }
+  }
+
+  private def typeLabel(v: DbValue): String = v match {
+    case DbValue.DbNull             => "Null"
+    case _: DbValue.DbInt           => "Int"
+    case _: DbValue.DbLong          => "Long"
+    case _: DbValue.DbDouble        => "Double"
+    case _: DbValue.DbFloat         => "Float"
+    case _: DbValue.DbBoolean       => "Boolean"
+    case _: DbValue.DbString        => "String"
+    case _: DbValue.DbBigDecimal    => "BigDecimal"
+    case _: DbValue.DbBytes         => "Bytes"
+    case _: DbValue.DbShort         => "Short"
+    case _: DbValue.DbByte          => "Byte"
+    case _: DbValue.DbChar          => "Char"
+    case _: DbValue.DbLocalDate     => "LocalDate"
+    case _: DbValue.DbLocalDateTime => "LocalDateTime"
+    case _: DbValue.DbLocalTime     => "LocalTime"
+    case _: DbValue.DbInstant       => "Instant"
+    case _: DbValue.DbDuration      => "Duration"
+    case _: DbValue.DbUUID          => "UUID"
+    case _: DbValue.DbArray         => "Array"
+  }
 
   private def aliasOf(table: Table[_]): Option[String] =
     if (table.name == source.name) Some("t0")
